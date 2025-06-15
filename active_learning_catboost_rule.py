@@ -98,7 +98,6 @@ while True:
         random_labeled += 1
     print(f"Labeled {random_labeled} random sentences")
     
-    
         
     print("\nRetraining model...")
     # Retrain model with updated labels
