@@ -1,32 +1,142 @@
 import json
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, util
+import torch  # for checking cuda availability
 from typing import List, Dict, Tuple
-import pandas as pd
-import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 import typer
 import spacy
-from sentence_transformers import util
-import re
 from openai import OpenAI
 import yaml
-
-from sentence_transformers import SentenceTransformer
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
+from time import sleep
 
 
+app = typer.Typer(
+    name="rule_extraction",
+    help="Extract grammatical rules from tagged sections",
+    pretty_exceptions_enable=False,
+    add_completion=False,
+)
 
-def main(
-    filename: str = typer.Argument(..., help="Path to the input 'tagged' JSON file")
+
+def load_nlp():
+    try:
+        nlp = spacy.blank("en")
+        nlp.add_pipe("sentencizer")
+        return nlp
+    except Exception:
+        # fallback
+        return spacy.load(
+            "en_core_web_sm", disable=["tagger", "ner", "lemmatizer", "attribute_ruler"]
+        )
+
+
+def load_embedder():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
+    return SentenceTransformer("all-MiniLM-L6-v2", device=device)
+
+
+def sentences(nlp, text):
+    return [s.text.strip() for s in nlp(text).sents] if text else []
+
+
+def split_by_similarity(text, nlp, model, target_words=200, min_gap=1):
+    sents = sentences(nlp, text)
+    if len(sents) <= 1:
+        return [text]
+
+    emb = model.encode(sents, convert_to_tensor=True, normalize_embeddings=True)
+    sims = [util.cos_sim(emb[i], emb[i + 1]).item() for i in range(len(sents) - 1)]
+
+    # compute desired splits from length
+    n_words = len(text.split())
+    n_splits = max(0, n_words // target_words)
+    if n_splits == 0:
+        return [text]
+
+    cand = sorted(range(len(sims)), key=lambda i: sims[i])  # lowest first
+    picks = []
+    for i in cand:
+        # ensure we don't pick boundaries too close to each other
+        if all(abs(i - j) >= min_gap for j in picks):
+            picks.append(i + 1)  # boundary after sentence i
+            if len(picks) == n_splits:
+                break
+    picks = sorted(picks)
+
+    paras, start = [], 0
+    for b in picks:
+        paras.append(" ".join(sents[start:b]))
+        start = b
+    if start < len(sents):
+        paras.append(" ".join(sents[start:]))
+
+    return [p for p in paras if p.strip()]
+
+
+def filter_sections(data, tags_to_filter, nlp):
+    kept, mapping = [], {}
+    for idx, sec in enumerate(data):
+        tags = sec.get("sorted_tags", [])
+        hits = [t for t, s in tags if t in tags_to_filter and s >= tags_to_filter[t]]
+        if hits or not any(t not in tags_to_filter for t, _ in tags):
+            sec["filtered"] = {
+                "status": True,
+                "reason": f"hits={hits}" if hits else "only filtered tags",
+            }
+            continue
+        sec["filtered"] = {"status": False, "reason": None}
+        sec["sentences"] = sentences(nlp, sec.get("text", ""))
+        mapping[idx] = len(kept)
+        kept.append(sec)
+    return kept, mapping
+
+
+def call_llm(client, model, prompt, paragraph, retries=3):
+    for a in range(retries):
+        try:
+            r = client.responses.create(
+                model=model, input=prompt.format(input_paragraph=paragraph)
+            )
+            return getattr(r, "output_text", None) or r.output[0].content[0].text
+        except Exception:
+            if a == retries - 1:
+                raise
+            sleep(2 * (a + 1))
+
+
+def parse_yaml_blocks(s):
+    s = (s or "").strip().replace("```yaml", "").replace("```", "")
+    try:
+        docs = list(yaml.safe_load_all(s))
+    except yaml.YAMLError:
+        return []
+    out = []
+    for d in docs:
+        if d is None:
+            continue
+        if isinstance(d, dict):
+            out.append(d)
+        elif isinstance(d, list):
+            out.extend([x for x in d if isinstance(x, dict)])
+    return out
+
+
+@app.command()
+def process_file(
+    filename: str = typer.Argument(None, help="Path to the input 'tagged' JSON file"),
+    target_words: int = typer.Option(
+        200, help="Target number of words per split section"
+    ),
+    min_gap: int = typer.Option(1, help="Minimum gap between splits (in sentences)"),
 ):
     with open(filename, encoding="utf-8") as f:
         data = json.load(f)
     print(len(data))
 
-    nlp = spacy.load("en_core_web_sm")
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    nlp = load_nlp()
+    model = load_embedder()
 
     ###
     sentences_data = []
@@ -38,25 +148,28 @@ def main(
         "Structure": 2.0,
         "Culture": 2.0,
         "History": 2.0,
-        "Phonetics": 2.0
+        "Phonetics": 2.0,
     }
 
-    filtered_idx=0
-    section_to_filtererd_mapping = {}
+    filtered_idx = 0
+    section_to_filtered_mapping = {}
 
-    for idx,section in enumerate(data):
+    for idx, section in enumerate(data):
         sorted_tags = section["sorted_tags"]
         sorted_tag_names = [tag[0] for tag in sorted_tags]
         tag_word_counts = section["tag_word_counts"]
         tag_counts_heading = section["tag_counts_heading"]
-    
+
         # Track filtering reason
         filter_reason = None
-        
+
         # Filter out sections with high scores in filtered tags
-        if any(tag[0] in tags_to_filter and tag[1] >= tags_to_filter[tag[0]] for tag in sorted_tags):
+        if any(
+            tag[0] in tags_to_filter and tag[1] >= tags_to_filter[tag[0]]
+            for tag in sorted_tags
+        ):
             filter_reason = f"High score in filtered tag: {[tag[0] for tag in sorted_tags if tag[0] in tags_to_filter and tag[1] >= tags_to_filter[tag[0]]]}"
-            section['filtered'] = {'status': True, 'reason': filter_reason}
+            section["filtered"] = {"status": True, "reason": filter_reason}
             filtered_out_data.append(section)
             continue
 
@@ -64,15 +177,15 @@ def main(
         other_tags = [tag for tag in sorted_tag_names if tag not in tags_to_filter]
         if not other_tags:
             filter_reason = "No tags other than filtered tags"
-            section['filtered'] = {'status': True, 'reason': filter_reason}
+            section["filtered"] = {"status": True, "reason": filter_reason}
             filtered_out_data.append(section)
             continue
 
         text = section["text"]
-        
+
         # Use spacy to split the text into sentences
         sentences = [sent.text.strip() for sent in nlp(text).sents]
-        
+
         # Create sentence data structure with filtering info
         section_data = {
             "text": text,
@@ -80,145 +193,45 @@ def main(
             "sorted_tags": sorted_tags,
             "tagged_words": tag_word_counts,
             "tagged_words_heading": tag_counts_heading,
-            "filtered": {"status": False, "reason": None}
+            "filtered": {"status": False, "reason": None},
         }
-        
+
         sentences_data.append(section_data)
-        section_to_filtererd_mapping[idx] = filtered_idx
+        section_to_filtered_mapping[idx] = filtered_idx
         filtered_idx += 1
 
-        section['filtered'] = {'status': False, 'reason': None}
+        section["filtered"] = {"status": False, "reason": None}
         section["sentences"] = sentences
 
     print(f"Total sections: {len(data)}")
-    print(f"Filtered sections: {len(filtered_out_data)}")
+    print(f"Filtered out sections: {len(filtered_out_data)}")
     print(f"Remaining sections: {len(sentences_data)}")
 
     # Save the filtered mapping to a JSON file
+    Path("scratch").mkdir(exist_ok=True)
     output_file = Path(f"scratch/{Path(filename).stem}_filtered_mapping.json")
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(section_to_filtererd_mapping, f, ensure_ascii=False, indent=4)
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(section_to_filtered_mapping, f, ensure_ascii=False, indent=4)
     print(f"Filtered mapping saved to {output_file}")
-
 
     all_sections = []
     for section in data:
         text = section.get("text", "")
         if not text:
             continue
-        filtered = section.get("filtered",None)
+        filtered = section.get("filtered", None)
         if filtered["status"] == True:
             continue
         all_sections.append(text)
 
     print(f"Total sections after filtering: {len(all_sections)}")
 
-
-
+    # Split sections into smaller chunks based on similarity
     sections_split = []
-
-    for idx,section in tqdm(enumerate(all_sections)):
-        section_length = len(section.split())
-        if section_length > 250:
-            print("Length = ",section_length)
-            #print(section[:30] + "......" + section[-30:])
-            # split into sentences
-            sentences = [sent.text.strip() for sent in nlp(section).sents]
-            print(sentences)
-            print(len(sentences))
-            
-        
-            embeddings = model.encode(sentences)
-            similarities = [util.cos_sim(embeddings[i], embeddings[i+1]).item() for i in range(len(embeddings)-1)]
-            print(len(similarities),similarities)
-
-            # Get indices of similarities in ascending order of similarity
-            # Get indices sorted by similarity in ascending order (least similar pairs first)
-            split_indices = [i for i in range(len(similarities))]
-            split_indices = sorted(split_indices, key=lambda x: similarities[x])
-            split_indices = [i+1 for i in split_indices]
-            print(split_indices)
-
-            # No of splits
-            n_splits = section_length // 200
-            remainder = section_length % 200
-
-            #print(n_splits,end='-')
-            threshold = 50
-            if (remainder / n_splits > threshold):
-                n_splits+=1
-
-            print("N_splits:",n_splits)
-
-            temp = 0
-            split_region = len(split_indices)/n_splits
-
-            split_regions = [i*split_region for i in range(1,n_splits)]
-            #print(split_regions)
-
-            split_region_threshold = n_splits-1
-
-            split_regions_range = []
-            for region in split_regions:
-                split_region = (region - split_region_threshold, region + split_region_threshold)
-            
-                split_region = (int(split_region[0]), int(split_region[1]))
-                split_regions_range.append(split_region)
-
-
-            print(split_regions_range)
-            
-
-            #print("Split region: ", split_region)
-            #print(split_regions)
-
-            iter = 0
-            split_indices_result = []
-            while(n_splits!=0 and iter < len(split_indices)):
-    
-                idx = split_indices[iter]
-                # Check if the index is in the split region of any of the split regions
-                for split_region in split_regions_range:
-                    if idx >= split_region[0] and idx <= split_region[1]:
-                        split_indices_result.append(idx)
-                        n_splits -= 1
-                        # Delete the region from the split regions
-                        split_regions_range.remove(split_region)
-                        print(f"Adding index {idx} to split indices result. Remaining splits: {n_splits}")
-                        break
-                    
-                    #split_indices_result.append(split_indices[idx])
-                    #n_splits -= 1
-                iter += 1
-            split_indices_result = sorted(set(split_indices_result))  # Remove duplicates and sort
-            print("Split indices: ",split_indices_result)
-
-            # Split the sentences into multiple paragraphs based on the split indices and then combine them into a single string 
-            paragraphs = []
-            start_idx = 0
-            for idx in split_indices_result:
-                if start_idx < idx:
-                    paragraphs.append(" ".join(sentences[start_idx:idx]))
-                    start_idx = idx
-            if start_idx < len(sentences):
-                paragraphs.append(" ".join(sentences[start_idx:]))
-            #print("No of paragraphs: ",len(paragraphs))
-            
-            # Length of each paragraph
-            #for i, paragraph in enumerate(paragraphs):
-            #    print(f"{i+1} - Paragraph: {paragraph} \nlength: {len(paragraph.split())}")  
-            # Replace the section with the paragraphs
-
-            sections_split.append(paragraphs)
-            #print("====================================")
-        else:
-            sections_split.append([section])
-
-    print("No of sections: ",len(sections_split))
-    all_sections = []
-    for section in sections_split:
-        all_sections.extend(section)
-    print("No of total paragraphs: ",len(all_sections))
+    for section in all_sections:
+        paras = split_by_similarity(section, nlp, model, target_words, min_gap)
+        sections_split.append(paras)
+    print(f"Total sections after splitting: {len(sections_split)}")
 
     ####################################################################################
     # Use gpt to extract rules from each paragraph using the prompt
@@ -270,11 +283,9 @@ def main(
     Paragraph: {{input_paragraph}}
     """
 
-    
     with open("api_key.txt", "r") as f:
         openai_api_key = f.read().strip()
 
-    
     client = OpenAI(api_key=openai_api_key)
 
     gpt_extracted_rules_direct = []
@@ -286,23 +297,20 @@ def main(
     for section in tqdm(sections_split):
         if LIMIT == 0:
             break
-        
-        LIMIT -= 1   
+
+        LIMIT -= 1
         # Process each section
         temp = []
         for paragraph in section:
             response = client.responses.create(
-                model=api_model,
-                input=base_prompt.format(input_paragraph=paragraph)
+                model=api_model, input=base_prompt.format(input_paragraph=paragraph)
             )
-            
+
             temp.append(response.output[0].content[0].text)
         gpt_extracted_rules_direct.append(temp)
 
     with open("scratch/gpt_extracted_rules_direct.json", "w", encoding="utf-8") as f:
         json.dump(gpt_extracted_rules_direct, f, ensure_ascii=False, indent=4)
-
-
 
     # clean the data
     for i, section in enumerate(gpt_extracted_rules_direct):
@@ -313,7 +321,9 @@ def main(
                 continue
             print(response)
             # Remove code block markers and extra spaces
-            cleaned_response = response.strip().replace("```yaml", "").replace("```", "")
+            cleaned_response = (
+                response.strip().replace("```yaml", "").replace("```", "")
+            )
             # Parse the cleaned YAML response
             try:
                 parsed_response = yaml.safe_load(cleaned_response)
@@ -327,18 +337,25 @@ def main(
                 if isinstance(parsed_response, dict):
                     parsed_response = [parsed_response]
                 elif not isinstance(parsed_response, list):
-                    print(f"Unexpected format for section {i}, paragraph {j}: {parsed_response}")
+                    print(
+                        f"Unexpected format for section {i}, paragraph {j}: {parsed_response}"
+                    )
                     parsed_response = []
             gpt_extracted_rules_direct[i][j] = parsed_response
     # Store the responses in a JSON file
-    with open(f"extracted_rules/{Path(filename).stem}_gpt_extracted_rules_direct_parsed.json", "w", encoding="utf-8") as f:
+    Path("extracted_rules").mkdir(exist_ok=True)
+    with open(
+        f"extracted_rules/{Path(filename).stem}_gpt_extracted_rules_direct_parsed.json",
+        "w",
+        encoding="utf-8",
+    ) as f:
         json.dump(gpt_extracted_rules_direct, f, ensure_ascii=False, indent=4)
 
-    print("Extraction complete. Results saved to", f"extracted_rules/{Path(filename).stem}_gpt_extracted_rules_direct_parsed.json")
-
+    print(
+        "Extraction complete. Results saved to",
+        f"extracted_rules/{Path(filename).stem}_gpt_extracted_rules_direct_parsed.json",
+    )
 
 
 if __name__ == "__main__":
-    typer.run(main)
-
-    
+    app()

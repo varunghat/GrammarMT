@@ -11,16 +11,44 @@ from nltk.corpus import wordnet
 
 lemmatizer = WordNetLemmatizer()
 
-def simplify_pos(tag):
-    if tag.startswith("J"): return wordnet.ADJ
-    elif tag.startswith("V"): return wordnet.VERB
-    elif tag.startswith("N"): return wordnet.NOUN
-    elif tag.startswith("R"): return wordnet.ADV
+
+def simplify_pos(tag: str):
+    """
+    Map Penn Treebank POS tags to WordNet POS tags.
+    Default fallback is NOUN.
+    """
+    tag = tag.upper()
+
+    if tag.startswith("J"):  # Adjective
+        return wordnet.ADJ
+    elif tag.startswith("V"):  # Verb
+        return wordnet.VERB
+    elif tag.startswith("N"):  # Noun
+        return wordnet.NOUN
+    elif tag.startswith("R"):  # Adverb
+        return wordnet.ADV
+
+    # Explicit extra mappings for clarity:
+    elif tag in {"PRP", "PRP$", "WP", "WP$"}:  # pronouns
+        return wordnet.NOUN
+    elif tag in {"DT", "PDT", "WDT"}:  # determiners
+        return wordnet.ADJ
+    elif tag in {"IN"}:  # prepositions/subordinating conjunctions
+        return wordnet.ADV
+    elif tag in {"CC"}:  # coordinating conjunctions
+        return wordnet.ADV
+    elif tag in {"CD"}:  # cardinal numbers
+        return wordnet.NOUN
+    elif tag in {"UH"}:  # interjections
+        return wordnet.NOUN
+
     return wordnet.NOUN
+
 
 def lemmatize(tokens):
     pos_tags = pos_tag(tokens)
     return [lemmatizer.lemmatize(tok, simplify_pos(pos)) for tok, pos in pos_tags]
+
 
 # Keywords for each grammar concept
 TAG_KEYWORDS = {
@@ -33,175 +61,354 @@ TAG_KEYWORDS = {
     "Future": ["future", "will", "shall"],
     "Adjective": ["adjective", "describes", "modifies noun"],
     "Adverb": ["adverb", "modifies verb", "manner"],
-    "Pronoun": ["pronoun",],
+    "Pronoun": [
+        "pronoun",
+    ],
     "Conjugation": ["conjugate", "conjugation", "form of verb", "verb table"],
     "Declension": ["declension", "form of noun"],
-    "Case": ["nominative", "accusative", "genitive", "dative", "instrumental", "locative"],
+    "Case": [
+        "nominative",
+        "accusative",
+        "genitive",
+        "dative",
+        "instrumental",
+        "locative",
+    ],
     "Tense": ["tense", "past", "present", "future"],
-    "1st Person": ["1st person", ],
-    "2nd Person": ["2nd person",],
-    "3rd Person": ["3rd person", ],
-    "Article": ["article","definite","indefinite"],
-    "Gender": ["gender","male","female","neutral","masculine","feminine","neuter"],
-    "Position": ["position", "preposition", "postposition", "prepositional phrase", "locative"],
+    "1st Person": [
+        "1st person",
+    ],
+    "2nd Person": [
+        "2nd person",
+    ],
+    "3rd Person": [
+        "3rd person",
+    ],
+    "Article": ["article", "definite", "indefinite"],
+    "Gender": [
+        "gender",
+        "male",
+        "female",
+        "neutral",
+        "masculine",
+        "feminine",
+        "neuter",
+    ],
+    "Position": [
+        "position",
+        "preposition",
+        "postposition",
+        "prepositional phrase",
+        "locative",
+    ],
     "Conjunction": ["conjunction"],
-    "Interjection": ["interjection", "exclamation", "emotion", "surprise", "greeting", "response"],
-
+    "Interjection": [
+        "interjection",
+        "exclamation",
+        "emotion",
+        "surprise",
+        "greeting",
+        "response",
+    ],
     # Book related tags
-    "Publishing information": ["publishing", "publisher", "publication", "editor", "copyright", "ISBN", "edition"],
-    "Structure": ["table of contents","contents", "index", "appendix", "bibliography", "glossary", "chapter", "section","page", "content", "introduction", "conclusion", "preface", "acknowledgment","appendix", "footnote", "endnote", "reference", "citation",],
-    "History": ["history", "origin", "etymology", "development", "evolution", "ancient", "classical", "historical", "linguistic history", "language family"],
-    "Culture": ["culture", "tradition", "festival", "ritual", "belief", "custom", "regional", "cultural context", "social context", "cultural significance"],
-
-
-
-
+    "Publishing information": [
+        "publishing",
+        "publisher",
+        "publication",
+        "editor",
+        "copyright",
+        "ISBN",
+        "edition",
+    ],
+    "Structure": [
+        "table of contents",
+        "contents",
+        "index",
+        "appendix",
+        "bibliography",
+        "glossary",
+        "chapter",
+        "section",
+        "page",
+        "content",
+        "introduction",
+        "conclusion",
+        "preface",
+        "acknowledgment",
+        "appendix",
+        "footnote",
+        "endnote",
+        "reference",
+        "citation",
+    ],
+    "History": [
+        "history",
+        "origin",
+        "etymology",
+        "development",
+        "evolution",
+        "ancient",
+        "classical",
+        "historical",
+        "linguistic history",
+        "language family",
+    ],
+    "Culture": [
+        "culture",
+        "tradition",
+        "festival",
+        "ritual",
+        "belief",
+        "custom",
+        "regional",
+        "cultural context",
+        "social context",
+        "cultural significance",
+    ],
     # Linguistic tags
-    "Phonetics": ["phonetics", "pronunciation", "sounds", "phonetic","phonology","phoneme","pronounce","retroflex","alveolar","dental","labial",
-        "voiced", "voiceless", "aspirated", "unaspirated", "nasalized", "unreleased", "fricative", "plosive", "affricate", "approximant", "lateral", "tap", "flap",
-        "glottal", "palatal", "velar", "uvular", "pharyngeal", "labiodental", "bilabial", "diphthong", "monophthong", "schwa", "vowel sound", "consonant sound",
-        "vowel", "consonant", "syllable", "intonation", "stress", "pitch", "tone"],
-    "Morphology": ["morphology", "structure of words", "word formation","morpheme","compound","affixation","derivation","inflection","root","stem","prefix","suffix"
-        "infix","circumfix","clitic","allomorph","inflectional morphology","derivational morphology", "agglutinative", "fusional", "isolating", "polysynthetic"],
-    "Semantics": ["semantics", "meaning", "interpretation", "context", "lexical semantics", "compositional semantics", "pragmatics"],
-    "Syntax": ["syntax", "sentence structure", "word order", "grammar rules","syntactic"],
-
-
-
+    "Phonetics": [
+        "phonetics",
+        "pronunciation",
+        "sounds",
+        "phonetic",
+        "phonology",
+        "phoneme",
+        "pronounce",
+        "retroflex",
+        "alveolar",
+        "dental",
+        "labial",
+        "voiced",
+        "voiceless",
+        "aspirated",
+        "unaspirated",
+        "nasalized",
+        "unreleased",
+        "fricative",
+        "plosive",
+        "affricate",
+        "approximant",
+        "lateral",
+        "tap",
+        "flap",
+        "glottal",
+        "palatal",
+        "velar",
+        "uvular",
+        "pharyngeal",
+        "labiodental",
+        "bilabial",
+        "diphthong",
+        "monophthong",
+        "schwa",
+        "vowel sound",
+        "consonant sound",
+        "vowel",
+        "consonant",
+        "syllable",
+        "intonation",
+        "stress",
+        "pitch",
+        "tone",
+    ],
+    "Morphology": [
+        "morphology",
+        "structure of words",
+        "word formation",
+        "morpheme",
+        "compound",
+        "affixation",
+        "derivation",
+        "inflection",
+        "root",
+        "stem",
+        "prefix",
+        "suffix",
+        "infix",
+        "circumfix",
+        "clitic",
+        "allomorph",
+        "inflectional morphology",
+        "derivational morphology",
+        "agglutinative",
+        "fusional",
+        "isolating",
+        "polysynthetic",
+    ],
+    "Semantics": [
+        "semantics",
+        "meaning",
+        "interpretation",
+        "context",
+        "lexical semantics",
+        "compositional semantics",
+        "pragmatics",
+    ],
+    "Syntax": [
+        "syntax",
+        "sentence structure",
+        "word order",
+        "grammar rules",
+        "syntactic",
+    ],
 }
 
-def classify_text_simple(text):
 
-    tags = []
-    
-    # Normalize text to lowercase
-    text = text.lower()
-    
-    for tag, keywords in TAG_KEYWORDS.items():
-        for keyword in keywords:
-            if re.search(r'\b' + re.escape(keyword) + r'\b', text):
-                tags.append(tag)
-                  # No need to check other keywords for this tag
-    
-    # Count occurrences of each tag
-    tag_counts = defaultdict(int)
-    for tag in tags:
-        tag_counts[tag] += 1
+def _prepare_keywords(tag_keywords):
+    norm = {}
+    for tag, kws in tag_keywords.items():
+        singles, phrases = [], []
+        for kw in kws:
+            kw_norm = kw.strip().lower()
+            if " " in kw_norm:
+                phrases.append(kw_norm)
+            else:
+                singles.append(kw_norm)
+        norm[tag] = {"singles": singles, "phrases": phrases}
+    return norm
 
-    return set(tags), dict(tag_counts)
 
-def classify_text_with_lemmatization(text):
-    # Tokenize and lemmatize the text
-    tokens = text.split()
-    lemmatized_tokens = lemmatize(tokens)
-    # lowercase the lemmatized tokens
-    lemmatized_tokens = [token.lower() for token in lemmatized_tokens]
+KEY_INDEX = _prepare_keywords(TAG_KEYWORDS)  # module global
 
-    tags = []
+
+_WORD_RE = re.compile(r"[A-Za-z0-9]+(?:['-][A-Za-z0-9]+)?")
+
+
+def _norm_text(text: str) -> str:
+    return " ".join(_WORD_RE.findall(text.lower()))
+
+
+def classify_text(text: str, use_lemma: bool = True):
+    raw = text or ""
+    if use_lemma:
+        tokens = [t for t in _WORD_RE.findall(raw)]
+        lemmas = lemmatize(tokens) if tokens else []
+        tokens_norm = [t.lower() for t in lemmas]
+        full_norm = " ".join(tokens_norm)
+    else:
+        tokens_norm = [t.lower() for t in _WORD_RE.findall(raw)]
+        full_norm = " ".join(tokens_norm)
+
+    token_set = set(tokens_norm)
+
+    tag_counts = defaultdict(float)
     tag_words = []
-    
-    for tag, keywords in TAG_KEYWORDS.items():
-        for keyword in keywords:
-            if re.search(r'\b' + re.escape(keyword) + r'\b', ' '.join(lemmatized_tokens)):
-                # Find all matching words
-                for token in lemmatized_tokens:
-                    if re.search(r'\b' + re.escape(keyword) + r'\b', token):
-                        tags.append(tag)
-                        tag_words.append((tag, token))
-                  
-    # Count occurrences of each tag
-    # Count each tag occurrence from tag_words list since it contains the actual word-tag pairs
-    tag_counts = defaultdict(int)
-    for tag, _ in tag_words:
-        tag_counts[tag] += 1
 
-    return tags, dict(tag_counts), tag_words
+    for tag, parts in KEY_INDEX.items():
+        # singles: count via token membership
+        for w in parts["singles"]:
+            if w in token_set:
 
-app = typer.Typer()
+                tag_counts[tag] += tokens_norm.count(
+                    w
+                )  # or +=1 if you want presence only
+                # optional: add each occurrence
+                tag_words.extend((tag, w) for _ in range(tokens_norm.count(w)))
+
+        # phrases: count via regex on full normalized text
+        for ph in parts["phrases"]:
+            # \b doesn't work across spaces reliably; anchor with (?<!\w) (?!\w)
+            pattern = rf"(?<!\w){re.escape(ph)}(?!\w)"
+            for _ in re.finditer(pattern, full_norm):
+                tag_counts[tag] += 1
+                tag_words.append((tag, ph))
+
+    # sorted tags by score
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+    return list({t for t, _ in sorted_tags}), dict(tag_counts), tag_words
+
+
+app = typer.Typer(
+    help="Classify sections of text into grammar concepts based on keyword matching.",
+    pretty_exceptions_enable=False,
+    add_completion=False,
+)
+
 
 @app.command()
-def classify_sections(filename: str):
-    print("Classifying sections in", filename)
-    with open(filename, "r", encoding="utf-8") as f:
-        data = json.load(f)
+def classify_sections(
+    filename: str = typer.Argument(
+        None, help="Path to the JSON file output from pdf_parser.py"
+    ),
+    heading_weight: float = typer.Option(
+        2.0, help="Weight multiplier for heading tag counts"
+    ),
+    threshold: float = typer.Option(
+        2.0, help="Minimum combined tag count to include a tag"
+    ),
+    strong_count: float = typer.Option(
+        4.0, help="Minimum combined tag count to consider a tag as strong"
+    ),
+):
+    """
+    Classify sections of text into grammar concepts based on keyword matching.
+    """
+    path = Path(filename)
+    data = json.loads(Path(filename).read_text(encoding="utf-8"))
+    out_dir = Path("classified_json")
+    out_dir.mkdir(exist_ok=True)
 
-    print("Data loaded with", len(data), "sections")
-
-    LEMMATIZED_TAG_KEYWORDS = []
-
-    for tag in TAG_KEYWORDS.keys():
-        lemmatized_keywords = []
-        for keyword in TAG_KEYWORDS[tag]:
-            # Split by spaces and lemmatize each word
-            words = keyword.split()
-            lemmatized_words = lemmatize(words)
-            lemmatized_keywords.append(" ".join(lemmatized_words))
-        LEMMATIZED_TAG_KEYWORDS.append((tag, lemmatized_keywords))
-
-
-    LEMMATIZED_TAG_KEYWORDS = dict(LEMMATIZED_TAG_KEYWORDS)
-    # Remove duplicates
-    LEMMATIZED_TAG_KEYWORDS = {k: list(set(v)) for k, v in LEMMATIZED_TAG_KEYWORDS.items()}
-
-
-
-    # Classify each section's text
-    classified_data = []
-    for section in tqdm(data):
-        text = section["text"]
+    classified = []
+    for section in tqdm(data, desc="Classifying"):
+        text = section.get("text", "")
         if len(text) < 10:
             continue
-        tags, tag_counts, tag_words = classify_text_with_lemmatization(text)
-        tags_heading, tag_counts_heading, tag_words_heading = classify_text_with_lemmatization(section["heading"])
 
-        # Combine the tags with more weight to the heading
-        heading_weight = 2.0
-        combined_tags = {tag: tag_counts.get(tag, 0) + heading_weight * tag_counts_heading.get(tag, 0) for tag in set(tags).union(set(tags_heading))}
-        combined_tag_counts = {tag: tag_counts.get(tag, 0) + heading_weight * tag_counts_heading.get(tag, 0) for tag in set(tag_counts).union(set(tag_counts_heading))}
+        tags_body, counts_body, words_body = classify_text(text, use_lemma=True)
+        tags_head, counts_head, words_head = classify_text(
+            section.get("heading", ""), use_lemma=True
+        )
 
-        threshold = 2.0
-        strong_threshold = 4.0
-        
-        # Filter out tags with low counts and convert to set
-        filtered_tags = set(tag for tag, count in combined_tag_counts.items() if count >= threshold)
+        # weighted combine
+        combined = defaultdict(float)
+        for k, v in counts_body.items():
+            combined[k] += v
+        for k, v in counts_head.items():
+            combined[k] += heading_weight * v
 
-        # Tags sorted by count
-        sorted_tags = sorted(combined_tag_counts.items(), key=lambda x: x[1], reverse=True)
+        filtered = [k for k, v in combined.items() if v >= threshold]
+        strong = {k: v for k, v in combined.items() if v >= strong_count}
+        sorted_combined = sorted(combined.items(), key=lambda x: x[1], reverse=True)
 
-        # Count occurrences of tag words
-        tag_word_counts = defaultdict(int)
-        for tag, word in tag_words:
-            tag_word_counts[f"{tag}:{word}"] += 1  # Convert tuple to string key
-        tag_word_counts_heading = defaultdict(int)
-        for tag, word in tag_words_heading:
-            tag_word_counts_heading[f"{tag}:{word}"] += 1  # Convert tuple to string key
+        # Build outputs
+        classified.append(
+            {
+                "heading": section.get("heading", ""),
+                "text": text,
+                "tags": tags_body,
+                "tag_counts": counts_body,
+                "tag_word_counts": {
+                    f"{t}:{w}": c for (t, w), c in _count_pairs(words_body).items()
+                },
+                "tags_heading": tags_head,
+                "tag_counts_heading": counts_head,
+                "tag_word_counts_heading": {
+                    f"{t}:{w}": c for (t, w), c in _count_pairs(words_head).items()
+                },
+                "combined_tag_counts": dict(
+                    sorted(combined.items(), key=lambda x: x[1], reverse=True)
+                ),
+                "filtered_tags": filtered,
+                "strong_tags": strong,
+                "sorted_tags": sorted_combined,
+                "page": section.get("page", ""),
+                "type": section.get("type", "unknown"),
+            }
+        )
 
-        classified_data.append({
-            "heading": section["heading"],
-            "text": text,
-            "tags": list(set(tags)),  # Keep counts for tags
-            "tag_counts": tag_counts,
-            "tag_word_counts": dict(tag_word_counts),
-            "tags_heading": list(set(tags_heading)), 
-            "tag_counts_heading": tag_counts_heading,
-            "tag_word_counts_heading": dict(tag_word_counts_heading),
-            "combined_tags": combined_tags,
-            "combined_tag_counts": combined_tag_counts,
-            "filtered_tags": list(filtered_tags),  # Convert set to list for JSON serialization
-            "sorted_tags": sorted_tags,
-            "strong_tags": {tag: count for tag, count in combined_tag_counts.items() if count >= strong_threshold},
-            "page": section.get("page", ""),  # Add page number if available
-            "type": section.get("type", "unknown"),  # Add type if available
-        })
+    out = out_dir / f"{path.stem}_classified.json"
+    out.write_text(
+        json.dumps(classified, ensure_ascii=False, indent=4), encoding="utf-8"
+    )
+    print("Classified data saved to", str(out))
 
-    Path("classified_json").mkdir(exist_ok=True)
-    # Save classified data to a new JSON file
-    with open(f"classified_json/{Path(filename).stem}_classified.json", "w", encoding="utf-8") as f:
-        json.dump(classified_data, f, ensure_ascii=False, indent=4)
-    
-    print("Classified data saved to", f"classified_json/{Path(filename).stem}_classified.json")
+
+def _count_pairs(pairs):
+    c = defaultdict(int)
+    for p in pairs:
+        c[p] += 1
+    return c
 
 
 if __name__ == "__main__":
     app()
-

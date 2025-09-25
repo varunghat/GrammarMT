@@ -17,6 +17,7 @@ app = typer.Typer(
     name="pdf_parser",
     help="PDF Parser to extract text, font styles, and sizes from PDF documents",
     pretty_exceptions_enable=False,
+    add_completion=False,
 )
 
 
@@ -388,11 +389,39 @@ def enrich_parallel_sentences(parallel_sents):
 
 
 @app.command()
-def parse_pdf(pdf_file_path: str):
+def parse_pdf(
+    pdf_file_path: str = typer.Argument(None, help="Path to the PDF file to be parsed"),
+    max_heading_number: int = typer.Option(
+        4,
+        "--max-heading-number",
+        "-mhn",
+        help="Maximum number of heading levels to consider",
+    ),
+    min_heading_occ_count: int = typer.Option(
+        5,
+        "--min-heading",
+        "-mh",
+        help="Minimum occurrences for a font size to be considered a heading",
+    ),
+    min_heading_total_char_length: int = typer.Option(
+        30,
+        "--min-heading-total-char-length",
+        "-mhtcl",
+        help="Minimum total character length for a font size to be considered a heading",
+    ),
+    main_body_tolerance: float = typer.Option(
+        0.5,
+        "--main-body-tolerance",
+        "-mbt",
+        help="Tolerance for main body font size matching",
+    ),
+):
     """
     Parses a PDF file and extracts text, font styles, and sizes.
     """
     # Open the PDF file
+    if pdf_file_path is None:
+        raise ValueError("Please provide a valid PDF file path.")
 
     pdf_file = os.path.abspath(pdf_file_path)
     pdf_file_name = os.path.splitext(os.path.basename(pdf_file))[0]
@@ -407,11 +436,19 @@ def parse_pdf(pdf_file_path: str):
     print(f"DEBUG: Extracted {len(all_lines)} lines from PDF.")
 
     print("DEBUG: Analyzing fonts to determine main body and headings...")
-    main_body, headings = analyze_fonts(all_lines)
+    main_body, headings = analyze_fonts(
+        all_lines,
+        min_heading_occ_count,
+        min_heading_total_char_length,
+        main_body_tolerance,
+    )
     print(f"DEBUG: Main body font size: {main_body}, Heading sizes: {headings}")
+    print(f"DEBUG: Limiting to top {max_heading_number} heading sizes...")
+    headings = headings[:max_heading_number]
+    print(f"DEBUG: Using heading sizes: {headings}")
 
     print("DEBUG: Building sections from lines...")
-    sections = build_sections(all_lines, main_body, headings)
+    sections = build_sections(all_lines, main_body, headings, max_heading_number)
     print(f"DEBUG: Built {len(sections)} sections.")
 
     print("DEBUG: Cleaning sections...")
