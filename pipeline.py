@@ -18,6 +18,9 @@ def run_pipeline(
     config_file: str = typer.Option(
         None, "--config", "-c", help="Path to the config file"
     ),
+    download_models: bool = typer.Option(
+        False, "--download-models", "-d", help="Download required models"
+    ),
 ):
     """
     Run the full document processing pipeline:
@@ -26,6 +29,13 @@ def run_pipeline(
     3. Extract rules from the tagged JSON
     4. Generate sentences from the extracted rules
     """
+    if download_models:
+        typer.echo("Downloading required models...")
+        error_code = subprocess.run(["python", "download_models.py"], check=True)
+        if error_code.returncode != 0:
+            typer.echo("Error downloading models, stopping pipeline.")
+            raise typer.Exit(code=error_code.returncode)
+        typer.echo("Models downloaded successfully.")
     if not filename or not Path(filename).is_file():
         typer.echo("Please provide a valid PDF filename.")
         raise typer.Exit(code=1)

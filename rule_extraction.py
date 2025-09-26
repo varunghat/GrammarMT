@@ -1,7 +1,6 @@
 import json
 from sentence_transformers import SentenceTransformer, util
 import torch  # for checking cuda availability
-from typing import List, Dict, Tuple
 from pathlib import Path
 from tqdm import tqdm
 import typer

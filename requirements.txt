@@ -1,0 +1,10 @@
+typer
+spacy
+tqdm
+langdetect
+openai
+torch
+sentence-transformers
+nltk
+numpy
+pandas
