@@ -1,0 +1,21 @@
+# Configuration file for sentence generation pipeline
+
+
+# PDF Parsing Settings (pdf_parser.py)
+max_heading_number: 4  # Maximum number of heading levels to consider
+min_heading_occ_count: 5  # Minimum occurrences for a font size to be considered a heading
+min_heading_total_char_length: 50  # Minimum total character length for a font size to be considered a heading
+main_body_tolerance: 0.5  # Tolerance for main body font size matching
+
+#Section tagger settings (section_tagger.py)
+heading_weight: 2.0  # Weight multiplier for heading tag counts
+threshold: 2.0  # Minimum combined tag count to include a tag
+strong_count: 4.0  # Minimum combined tag count to consider a tag as strong
+
+# Rule extraction settings (rule_extraction.py)
+target_words: 200  # Target number of words per split section
+min_gap: 1  # Minimum gap between splits (in sentences)
+
+# Sentence generation settings (sentence_generation.py)
+sentence_limit: 30  # Number of sentences to use as seed to generate new sentences
+no_of_random_nouns: 2  # Number of random nouns to use for generation

@@ -57,7 +57,7 @@ def collect_consecutive_lines_across_blocks(
     return block_index, line_index, " ".join(collected_text), target_font
 
 
-def build_line_table(pdf_file_path):
+def build_line_table(pdf_file_path, y_tolerance=2.0, line_tolerance=2.0):
     all_lines = []
 
     try:
@@ -79,23 +79,33 @@ def build_line_table(pdf_file_path):
                 if not spans:
                     continue
 
+                # Sort spans by y (top to bottom) and then x (left to right) with tolerance
+                # This is to handle cases where spans are not in reading order
+                for span in spans:
+                    x0, y0, _, _ = span["bbox"]
+                    span["_y_round"] = round(y0 / y_tolerance) * y_tolerance
+                    span["_x"] = x0
+                spans_sorted = sorted(spans, key=lambda s: (s["_y_round"], s["_x"]))
+                # spans = spans_sorted
                 # Merge spans into one line string
                 merged_text = " ".join(
-                    span["text"].strip() for span in spans if span["text"].strip()
+                    span["text"].strip()
+                    for span in spans_sorted
+                    if span["text"].strip()
                 )
                 if not merged_text:
                     continue
 
                 # Choose a "dominant" font/size for the line
-                sizes = [span["size"] for span in spans]
-                fonts = [span["font"] for span in spans]
+                sizes = [span["size"] for span in spans_sorted]
+                fonts = [span["font"] for span in spans_sorted]
 
                 # Representative = most common size & font
                 rep_size = max(set(sizes), key=sizes.count)
                 rep_font = max(set(fonts), key=fonts.count)
 
                 # Position = from first span
-                x, y = spans[0]["bbox"][:2]
+                x, y = spans_sorted[0]["bbox"][:2]
 
                 all_lines.append(
                     {
@@ -110,13 +120,20 @@ def build_line_table(pdf_file_path):
                     }
                 )
 
+    # Sort all lines by page, y (top to bottom), x (left to right)
+    #
+
+    for line in all_lines:
+        line["_y_round"] = round(line["y"] / line_tolerance) * line_tolerance
+    all_lines.sort(key=lambda l: (l["page"], l["_y_round"], l["x"]))
+
     return all_lines
 
 
 def analyze_fonts(
     all_lines,
     min_heading_occ_count=5,
-    min_heading_total_char_length=30,
+    min_heading_total_char_length=50,
     main_body_tolerance=0.5,
 ):
 
@@ -404,7 +421,7 @@ def parse_pdf(
         help="Minimum occurrences for a font size to be considered a heading",
     ),
     min_heading_total_char_length: int = typer.Option(
-        30,
+        50,
         "--min-heading-total-char-length",
         "-mhtcl",
         help="Minimum total character length for a font size to be considered a heading",
