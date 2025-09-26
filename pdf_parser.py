@@ -480,6 +480,11 @@ def parse_pdf(
     parallel_sentences_enriched = enrich_parallel_sentences(parallel_sentences)
     print(f"DEBUG: Enriched {len(parallel_sentences_enriched)} parallel sentences.")
 
+    # Ensure output directories exist
+    os.makedirs("parsed_grammar_json", exist_ok=True)
+    os.makedirs("parallel_sents", exist_ok=True)
+    # store sections
+
     print("Storing section text to JSON file...")
     with open(
         f"parsed_grammar_json/{pdf_file_name}_sections.json", "w", encoding="utf-8"
