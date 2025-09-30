@@ -180,7 +180,8 @@ def run_pipeline(
     if config_file:
         sentence_limit = config.get("sentence_limit", None)
         no_of_random_nouns = config.get("no_of_random_nouns", None)
-        if sentence_limit is None or no_of_random_nouns is None:
+        output_dir = config.get("output_dir", "generated_sentences")
+        if sentence_limit is None or no_of_random_nouns is None or output_dir is None:
             typer.echo(
                 "Config file is missing required parameters for sentence_generation.py."
             )
@@ -188,6 +189,9 @@ def run_pipeline(
                 typer.echo("Missing: sentence_limit")
             if no_of_random_nouns is None:
                 typer.echo("Missing: no_of_random_nouns")
+
+            if output_dir is None:
+                typer.echo("Missing: output_dir")
             raise typer.Exit(code=1)
         command.extend(
             [
@@ -195,6 +199,8 @@ def run_pipeline(
                 str(sentence_limit),
                 "--no-of-random-nouns",
                 str(no_of_random_nouns),
+                "--output-dir",
+                output_dir,
             ]
         )
     error_code = subprocess.run(command, check=True)

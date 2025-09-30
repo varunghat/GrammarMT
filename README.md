@@ -15,6 +15,9 @@ Each stage can be configured via a YAML config file.
 
 ## Usage
 
+Make sure your OpenAI API key is set in `api_key.txt`.
+(Temporary, will be fixed later and more APIs will be added)
+
 Run the pipeline using:
 
 ```bash

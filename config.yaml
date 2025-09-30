@@ -19,3 +19,4 @@ min_gap: 1  # Minimum gap between splits (in sentences)
 # Sentence generation settings (sentence_generation.py)
 sentence_limit: 30  # Number of sentences to use as seed to generate new sentences
 no_of_random_nouns: 2  # Number of random nouns to use for generation
+output_dir: "generated_sentences"  # Directory to save the generated sentences. Use this to create multiple output dirs for different runs.

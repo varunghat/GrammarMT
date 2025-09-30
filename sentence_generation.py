@@ -3,13 +3,22 @@ from pathlib import Path
 import typer
 import random
 from openai import OpenAI
+from google import genai
 from tqdm import tqdm
 
+# Hardcode model selection for now: "openai" or "gemini"
+MODEL_PROVIDER = "gemini"  # Change to "gemini" to use Gemini
 
-with open("api_key.txt", "r") as f:
-    openai_api_key = f.read().strip()
-
-client = OpenAI(api_key=openai_api_key)
+if MODEL_PROVIDER == "openai":
+    with open("api_key.txt", "r") as f:
+        openai_api_key = f.read().strip()
+    client = OpenAI(api_key=openai_api_key)
+elif MODEL_PROVIDER == "gemini":
+    with open("gemini_api_key.txt", "r") as f:
+        gemini_api_key = f.read().strip()
+    client = genai.Client(api_key=gemini_api_key)
+else:
+    raise ValueError("Unsupported MODEL_PROVIDER: choose 'openai' or 'gemini'")
 
 app = typer.Typer(
     name="sentence_generation",
@@ -27,6 +36,9 @@ def generate_sentences(
     ),
     no_of_random_nouns: int = typer.Option(
         2, help="Number of random nouns to use for generation"
+    ),
+    output_dir: str = typer.Option(
+        "generated_sentences", help="Directory to save the generated sentences"
     ),
 ):
     """
@@ -191,7 +203,7 @@ def generate_sentences(
             pass
         else:
             print(f"Noun to be replaced: {noun_to_be_replaced}")
-            translation_noun_to_be_replaced = dict.get(
+            translation_noun_to_be_replaced = dictionary.get(
                 noun_to_be_replaced, "No translation available"
             )
             if translation_noun_to_be_replaced == "No translation available":
@@ -434,7 +446,7 @@ def generate_sentences(
 
         for noun in random_nouns.keys():
             noun = noun.strip()
-            noun_translation = dict.get(noun, "No translation available")
+            noun_translation = dictionary.get(noun, "No translation available")
             if noun_translation == "No translation available":
                 print(f"Warning: No translation found for noun '{noun}'")
 
@@ -449,13 +461,19 @@ def generate_sentences(
             )
             # print(prompt)
 
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=200,
-                # temperature=0.7
-            )
-            generated_text = response.choices[0].message.content.strip()
+            if MODEL_PROVIDER == "gemini":
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash", contents=prompt
+                )
+                generated_text = response.text.strip()
+            elif MODEL_PROVIDER == "openai":
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=200,
+                    # temperature=0.7
+                )
+                generated_text = response.choices[0].message.content.strip()
             print(f"Generated Text: {generated_text}")
             # remove multiple newlines
             generated_text = "\n".join(
