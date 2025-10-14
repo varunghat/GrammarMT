@@ -7,7 +7,9 @@ from google import genai
 from tqdm import tqdm
 
 # Hardcode model selection for now: "openai" or "gemini"
-MODEL_PROVIDER = "gemini"  # Change to "gemini" to use Gemini
+MODEL_PROVIDER = "openai"  # Change to "gemini" to use Gemini
+
+print(f"Model provider = {MODEL_PROVIDER}")
 
 if MODEL_PROVIDER == "openai":
     with open("api_key.txt", "r") as f:
@@ -40,6 +42,7 @@ def generate_sentences(
     output_dir: str = typer.Option(
         "generated_sentences", help="Directory to save the generated sentences"
     ),
+    filter_rules: bool = typer.Option(False, help="Whether to filter the rules or not"),
 ):
     """
     Generate sentences based on linguistic rules and a dictionary."""
@@ -95,29 +98,41 @@ def generate_sentences(
         parallel_sentences_with_pos_and_unimorph = json.load(f)
 
     # Load dictionary file based on base_filename if available, else use default path
-    dict_path = Path("dictionary") / f"{base_filename}_dictionary_cleaned.json"
+    dict_path = Path("dictionary") / f"{base_filename}_dictionary.json"
 
-    with open(dict_path, "r", encoding="utf-8") as f:
-        dictionary = json.load(f)
+    try:
+        with open(dict_path, "r", encoding="utf-8") as f:
+            dictionary = json.load(f)
+            # reverse the dictionary to map from language to English
+            dictionary = {v.lower(): k.lower() for k, v in dictionary.items()}
+    except FileNotFoundError:
+        print(
+            f"Dictionary file not found at {dict_path}. Please provide a valid dictionary file."
+        )
+        pass
 
-    # Find all rules with N in unimorph
-    noun_rules = []
+    if filter_rules:
+        # Find all rules with N in unimorph
+        noun_rules = []
 
-    for rule in all_rules:
-        if "unimorph" in rule and rule["unimorph"] is not None:
-            if type(rule["unimorph"]) == list:
-                continue
-            split_unimorph = rule["unimorph"].split(";")
-            if "N" in split_unimorph:
-                noun_rules.append(rule)
-    len(noun_rules)
+        for rule in all_rules:
+            if "unimorph" in rule and rule["unimorph"] is not None:
+                if type(rule["unimorph"]) == list:
+                    continue
+                split_unimorph = rule["unimorph"].split(";")
+                if "N" in split_unimorph:
+                    noun_rules.append(rule)
+        len(noun_rules)
 
-    filtered_noun_rules = []
-    for rule in noun_rules:
-        if "means" not in rule["description"] and rule["fst_rule"]:
-            filtered_noun_rules.append(rule)
+        filtered_noun_rules = []
+        for rule in noun_rules:
+            if "means" not in rule["description"] and rule["fst_rule"]:
+                filtered_noun_rules.append(rule)
 
-    len(filtered_noun_rules), filtered_noun_rules
+        print("Total noun rules:", len(noun_rules))
+        print("Filtered noun rules:", len(filtered_noun_rules), filtered_noun_rules)
+    else:
+        filtered_noun_rules = all_rules
 
     base_prompt = f"""You are an expert in linguistics and you are tasked with generating sentences in a language called {{lang}}.
     You will be given a set of rules that describe how to form sentences in {{lang}}. 
@@ -159,6 +174,10 @@ def generate_sentences(
     # TODO: Fix hardcoded pronouns
 
     LIMIT = sentence_limit
+    if LIMIT <= 0 or LIMIT > len(parallel_sentences_with_pos_and_unimorph):
+        LIMIT = len(parallel_sentences_with_pos_and_unimorph)
+
+    print(f"Using {LIMIT} sentences for generation.")
 
     for sentence in tqdm(parallel_sentences_with_pos_and_unimorph[:LIMIT]):
 
@@ -444,7 +463,7 @@ def generate_sentences(
         pos_info_text = ""
         # print(pos_info_text)
 
-        for noun in random_nouns.keys():
+        for noun in tqdm(random_nouns.keys()):
             noun = noun.strip()
             noun_translation = dictionary.get(noun, "No translation available")
             if noun_translation == "No translation available":
@@ -468,7 +487,7 @@ def generate_sentences(
                 generated_text = response.text.strip()
             elif MODEL_PROVIDER == "openai":
                 response = client.chat.completions.create(
-                    model="gpt-4o",
+                    model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=200,
                     # temperature=0.7
