@@ -29,6 +29,70 @@ app = typer.Typer(
     add_completion=False,
 )
 
+# Rule selection function
+def select_rules(all_rules, gender=None, number=None, case=None, tense=None):
+    def has(desc, kw): return kw in desc.lower()
+
+    selected = []
+    def add(pred): selected.extend([r for r in all_rules if pred(r)])
+
+    if gender == "Masc": add(lambda r: has(r["description"], "masculine"))
+    if gender == "Fem":  add(lambda r: has(r["description"], "feminine"))
+    if number == "Plur": add(lambda r: has(r["description"], "plural"))
+    if case == "Nom":    add(lambda r: has(r["description"], "nominative"))
+    if case == "Acc":    add(lambda r: has(r["description"], "accusative"))
+    if case == "Dat":    add(lambda r: has(r["description"], "dative"))
+    if case == "Gen":    add(lambda r: has(r["description"], "genitive"))
+    if case == "Loc":    add(lambda r: has(r["description"], "locative"))
+    if case == "Abl":    add(lambda r: has(r["description"], "ablative"))
+    if case == "Voc":    add(lambda r: has(r["description"], "vocative"))
+    if tense == "Past":  add(lambda r: has(r["description"], "past"))
+    if tense == "Pres":  add(lambda r: has(r["description"], "present"))
+    if tense == "Fut":   add(lambda r: has(r["description"], "future"))
+
+    # dedupe & cap
+    unique = {}
+    for r in selected:
+        unique.setdefault(r["description"], r)
+    capped = list(unique.values())[:50]  # keep context small
+    return "\n".join(f"- {r['description']}" for r in capped) or "No specific rules apply."
+
+def load_rules(rules_filename):
+    with open(rules_filename, "r", encoding="utf-8") as f:
+        rules_data = json.load(f)
+
+    all_rules = []
+    for section in rules_data:
+        if section is not None:  # Check if section is not None
+            for paragraph in section:
+                if paragraph is not None:  # Check if paragraph is not None
+                    all_rules.extend(paragraph)
+
+    rules_with_fst = [
+        rule
+        for rule in all_rules
+        if "fst_rule" in rule and rule["fst_rule"] is not None
+    ]
+
+    rules_with_unimorph = [
+        rule
+        for rule in all_rules
+        if "unimorph" in rule and rule["unimorph"] is not None
+    ]
+    return all_rules, rules_with_fst, rules_with_unimorph
+
+def load_dictionary(dict_path):
+    try:
+        with open(dict_path, "r", encoding="utf-8") as f:
+            dictionary = json.load(f)
+            # reverse the dictionary to map from language to English
+            dictionary = {v.lower(): k.lower() for k, v in dictionary.items()}
+            return dictionary
+    except FileNotFoundError:
+        print(
+            f"Dictionary file not found at {dict_path}. Please provide a valid dictionary file."
+        )
+        return {}
 
 @app.command()
 def generate_sentences(
@@ -48,41 +112,11 @@ def generate_sentences(
     Generate sentences based on linguistic rules and a dictionary."""
     base_filename = Path(filename).stem
 
-    rules_filename = (
-        Path("extracted_rules")
-        / f"{base_filename}_sections_classified_gpt_extracted_rules_direct_parsed.json"
-    )
-    with open(rules_filename, "r", encoding="utf-8") as f:
-        rules_data = json.load(f)
-
-    parallel_sentences_file = (
-        Path("parallel_sents")
-        / f"{base_filename}_parallel_sentences_with_pos_and_unimorph.json"
-    )
-    with open(rules_filename, "r", encoding="utf-8") as f:
-        rules_data = json.load(f)
-    all_rules = []
-    for section in rules_data:
-        if section is not None:  # Check if section is not None
-            for paragraph in section:
-                if paragraph is not None:  # Check if paragraph is not None
-                    all_rules.extend(paragraph)
+    rules_filename = Path("rules") / f"{base_filename}_rules.json"
+    all_rules,rules_with_fst,rules_with_unimorph = load_rules(rules_filename)
 
     # Flattened list of all rules
     print(len(all_rules))
-
-    rules_with_fst = [
-        rule
-        for rule in all_rules
-        if "fst_rule" in rule and rule["fst_rule"] is not None
-    ]
-
-    rules_with_unimorph = [
-        rule
-        for rule in all_rules
-        if "unimorph" in rule and rule["unimorph"] is not None
-    ]
-
     print(len(rules_with_fst), len(rules_with_unimorph), len(all_rules))
 
     # Filter out rules into differnet categories (add tags?)
@@ -94,45 +128,26 @@ def generate_sentences(
             print(rule["unimorph"])
 
     # Use the dynamically constructed parallel sentences filename
+
+    parallel_sentences_file = (
+        Path("parallel_sents")
+        / f"{base_filename}_parallel_sentences_with_pos_and_unimorph.json"
+    )
+
     with open(parallel_sentences_file, "r", encoding="utf-8") as f:
         parallel_sentences_with_pos_and_unimorph = json.load(f)
 
     # Load dictionary file based on base_filename if available, else use default path
     dict_path = Path("dictionary") / f"{base_filename}_dictionary.json"
+    dictionary = load_dictionary(dict_path)
 
-    try:
-        with open(dict_path, "r", encoding="utf-8") as f:
-            dictionary = json.load(f)
-            # reverse the dictionary to map from language to English
-            dictionary = {v.lower(): k.lower() for k, v in dictionary.items()}
-    except FileNotFoundError:
-        print(
-            f"Dictionary file not found at {dict_path}. Please provide a valid dictionary file."
-        )
-        pass
-
-    if filter_rules:
-        # Find all rules with N in unimorph
-        noun_rules = []
-
-        for rule in all_rules:
-            if "unimorph" in rule and rule["unimorph"] is not None:
-                if type(rule["unimorph"]) == list:
-                    continue
-                split_unimorph = rule["unimorph"].split(";")
-                if "N" in split_unimorph:
-                    noun_rules.append(rule)
-        len(noun_rules)
-
-        filtered_noun_rules = []
-        for rule in noun_rules:
-            if "means" not in rule["description"] and rule["fst_rule"]:
-                filtered_noun_rules.append(rule)
-
-        print("Total noun rules:", len(noun_rules))
-        print("Filtered noun rules:", len(filtered_noun_rules), filtered_noun_rules)
-    else:
-        filtered_noun_rules = all_rules
+    # FILTERED NOUN RULES CODE
+    # ADD CODE HERE
+    # .
+    # .
+    # .
+    # .
+    # FILTERED NOUN RULES CODE END
 
     base_prompt = f"""You are an expert in linguistics and you are tasked with generating sentences in a language called {{lang}}.
     You will be given a set of rules that describe how to form sentences in {{lang}}. 
@@ -170,13 +185,7 @@ def generate_sentences(
 
     generated_sentences = []
 
-    # pronouns = ["avanu", "ivanu", "avaḷu","ivaḷu", "nīnu","nīvu", "nānu", "nāvu", "avaru", "ivaru","adu","idu"]
-    # TODO: Fix hardcoded pronouns
-
-    LIMIT = sentence_limit
-    if LIMIT <= 0 or LIMIT > len(parallel_sentences_with_pos_and_unimorph):
-        LIMIT = len(parallel_sentences_with_pos_and_unimorph)
-
+    LIMIT = min(max(sentence_limit, 0), len(parallel_sentences_with_pos_and_unimorph))
     print(f"Using {LIMIT} sentences for generation.")
 
     for sentence in tqdm(parallel_sentences_with_pos_and_unimorph[:LIMIT]):
@@ -523,14 +532,12 @@ def generate_sentences(
             )
 
     # Save generated sentences to a file
-    output_filename = (
-        Path("generated_sentences") / f"{base_filename}_generated_sentences.json"
-    )
-    output_filename.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_filename, "w", encoding="utf-8") as f:
+    output_path = Path(output_dir) / f"{base_filename}_generated_sentences.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(generated_sentences, f, ensure_ascii=False, indent=4)
 
-    print(f"Generated sentences saved to {output_filename}")
+    print(f"Generated sentences saved to {output_path}")
 
 
 if __name__ == "__main__":
