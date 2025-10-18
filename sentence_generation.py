@@ -94,6 +94,38 @@ def load_dictionary(dict_path):
         )
         return {}
 
+def get_nouns_only_dict(dictionary_with_metadata):
+    nouns_only_dict = {}
+
+    headnoun_not_pos = 0
+
+    for word, word_metadata in dictionary_with_metadata.items():
+        senses = word_metadata.get("senses", [])
+        if not senses:
+            continue
+
+        noun_like = False
+        noun_count = 0
+        for sense in senses:
+            spacy_analysis = sense.get("spacy_analysis")
+            if not spacy_analysis:
+                continue
+                
+
+            pos = spacy_analysis.get("head_pos")
+            if pos in {"NOUN", "PROPN"}:
+                noun_count += 1
+
+
+        if noun_count/len(senses) >= 0.5:  # at least half the senses are noun-like
+            noun_like = True
+
+        if noun_like:
+            nouns_only_dict[word] = dictionary_with_metadata.get(word, word_metadata)
+
+    return nouns_only_dict
+
+
 @app.command()
 def generate_sentences(
     filename: str = typer.Argument(None, help="Path to the input pdf file"),
@@ -140,14 +172,12 @@ def generate_sentences(
     # Load dictionary file based on base_filename if available, else use default path
     dict_path = Path("dictionary") / f"{base_filename}_dictionary.json"
     dictionary = load_dictionary(dict_path)
+    dictionary_with_metadata_path = Path("dictionary") / f"{base_filename}_dictionary_with_metadata.json"
+    dictionary_with_metadata = load_dictionary(dictionary_with_metadata_path)
 
-    # FILTERED NOUN RULES CODE
-    # ADD CODE HERE
-    # .
-    # .
-    # .
-    # .
-    # FILTERED NOUN RULES CODE END
+    # TODO: Make this filtering for each POS
+    nouns_only_dict = get_nouns_only_dict(dictionary_with_metadata)
+
 
     base_prompt = f"""You are an expert in linguistics and you are tasked with generating sentences in a language called {{lang}}.
     You will be given a set of rules that describe how to form sentences in {{lang}}. 
@@ -174,12 +204,9 @@ def generate_sentences(
     Only provide the generated sentence and the translation, do not provide any additional information.
     """
 
-    # Select n random nouns from the nouns_pos_mapping
 
-    random_nouns = random.sample(list(dictionary.items()), no_of_random_nouns)
-    random_nouns = {noun: dictionary[noun] for noun, _ in random_nouns}
 
-    print("Randomly selected nouns:", random_nouns)
+
 
     #####################
 
