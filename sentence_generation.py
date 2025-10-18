@@ -94,18 +94,16 @@ def load_dictionary(dict_path):
         )
         return {}
 
-def get_nouns_only_dict(dictionary_with_metadata):
-    nouns_only_dict = {}
-
-    headnoun_not_pos = 0
+def filter_dict_by_pos(dictionary_with_metadata, target_pos):
+    filtered_dict = {}
 
     for word, word_metadata in dictionary_with_metadata.items():
         senses = word_metadata.get("senses", [])
         if not senses:
             continue
 
-        noun_like = False
-        noun_count = 0
+        pos_like = False
+        count = 0
         for sense in senses:
             spacy_analysis = sense.get("spacy_analysis")
             if not spacy_analysis:
@@ -113,18 +111,16 @@ def get_nouns_only_dict(dictionary_with_metadata):
                 
 
             pos = spacy_analysis.get("head_pos")
-            if pos in {"NOUN", "PROPN"}:
-                noun_count += 1
+            if pos in target_pos:
+                count += 1
 
+        if count/len(senses) >= 0.5:  # at least half the senses are POS-like
+            pos_like = True
 
-        if noun_count/len(senses) >= 0.5:  # at least half the senses are noun-like
-            noun_like = True
+        if pos_like:
+            filtered_dict[word] = dictionary_with_metadata.get(word, word_metadata)
 
-        if noun_like:
-            nouns_only_dict[word] = dictionary_with_metadata.get(word, word_metadata)
-
-    return nouns_only_dict
-
+    return filtered_dict
 
 @app.command()
 def generate_sentences(
@@ -176,8 +172,10 @@ def generate_sentences(
     dictionary_with_metadata = load_dictionary(dictionary_with_metadata_path)
 
     # TODO: Make this filtering for each POS
-    nouns_only_dict = get_nouns_only_dict(dictionary_with_metadata)
-
+    nouns_only_dict = filter_dict_by_pos(dictionary_with_metadata, target_pos=["NOUN", "PROPN"])
+    verbs_only_dict = filter_dict_by_pos(dictionary_with_metadata, target_pos=["VERB"])
+    adjectives_only_dict = filter_dict_by_pos(dictionary_with_metadata, target_pos=["ADJ"])
+    adverbs_only_dict = filter_dict_by_pos(dictionary_with_metadata, target_pos=["ADV"])
 
     base_prompt = f"""You are an expert in linguistics and you are tasked with generating sentences in a language called {{lang}}.
     You will be given a set of rules that describe how to form sentences in {{lang}}. 
