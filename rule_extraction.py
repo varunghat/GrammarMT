@@ -154,6 +154,7 @@ def process_file(
     section_to_filtered_mapping = {}
 
     for idx, section in enumerate(data):
+        section_id = section.get("id",None)
         sorted_tags = section["sorted_tags"]
         sorted_tag_names = [tag[0] for tag in sorted_tags]
         tag_word_counts = section["tag_word_counts"]
@@ -187,6 +188,7 @@ def process_file(
 
         # Create sentence data structure with filtering info
         section_data = {
+            "id": section_id,
             "text": text,
             "sentences": sentences,
             "sorted_tags": sorted_tags,
@@ -288,12 +290,14 @@ def process_file(
     client = OpenAI(api_key=openai_api_key)
 
     gpt_extracted_rules_direct = []
+    rule_section_map = []
     # Set limit for API calls
     LIMIT = -1
     # Iterate through the sections
     print("Total sections to process:", len(sections_split))
     api_model = "gpt-4o-mini"
     for section in tqdm(sections_split):
+        section_id = section.get("id", None)
         if LIMIT == 0:
             break
 
@@ -307,6 +311,7 @@ def process_file(
 
             temp.append(response.output[0].content[0].text)
         gpt_extracted_rules_direct.append(temp)
+        rule_section_map.append(section_id)
 
     with open("scratch/gpt_extracted_rules_direct.json", "w", encoding="utf-8") as f:
         json.dump(gpt_extracted_rules_direct, f, ensure_ascii=False, indent=4)
@@ -315,6 +320,7 @@ def process_file(
     for i, section in enumerate(gpt_extracted_rules_direct):
         if section is None:
             continue
+        section_id = rule_section_map[i]
         for j, response in enumerate(section):
             if response is None:
                 continue
@@ -340,6 +346,9 @@ def process_file(
                         f"Unexpected format for section {i}, paragraph {j}: {parsed_response}"
                     )
                     parsed_response = []
+                for response in parsed_response:
+                    response["section_id"] = section_id
+                    
             gpt_extracted_rules_direct[i][j] = parsed_response
     # Store the responses in a JSON file
     Path("extracted_rules").mkdir(exist_ok=True)

@@ -165,13 +165,13 @@ def analyze_fonts(
 def build_sections(all_lines, main_body_size, headings_sizes, main_body_tolerance=0.5):
     sections = []
     current = None
-
     for line in all_lines:
         sz, txt, font = line["size"], line["text"], line["font"]
         if sz in headings_sizes:
             if current:
                 sections.append(current)
             current = {
+                "id": len(sections) + 1,
                 "heading": txt,
                 "heading_level": headings_sizes.index(sz) + 1,
                 "text": "",
@@ -346,6 +346,7 @@ def extract_parallel_sentences(all_lines):
             if eng and other:
                 parallel_sents.append(
                     {
+                        "id": len(parallel_sents) + 1,
                         "page": line["page"],
                         "text": " ".join(other),
                         "IGT": " ".join(igt),

@@ -5,22 +5,8 @@ import random
 from openai import OpenAI
 from google import genai
 from tqdm import tqdm
+import re
 
-# Hardcode model selection for now: "openai" or "gemini"
-MODEL_PROVIDER = "openai"  # Change to "gemini" to use Gemini
-
-print(f"Model provider = {MODEL_PROVIDER}")
-
-if MODEL_PROVIDER == "openai":
-    with open("api_key.txt", "r") as f:
-        openai_api_key = f.read().strip()
-    client = OpenAI(api_key=openai_api_key)
-elif MODEL_PROVIDER == "gemini":
-    with open("gemini_api_key.txt", "r") as f:
-        gemini_api_key = f.read().strip()
-    client = genai.Client(api_key=gemini_api_key)
-else:
-    raise ValueError("Unsupported MODEL_PROVIDER: choose 'openai' or 'gemini'")
 
 app = typer.Typer(
     name="sentence_generation",
@@ -28,6 +14,24 @@ app = typer.Typer(
     pretty_exceptions_enable=False,
     add_completion=False,
 )
+
+
+def select_model_client(model_provider = "openai"):
+
+    print(f"Model provider = {model_provider}")
+
+    if model_provider == "openai":
+        with open("api_key.txt", "r") as f:
+            openai_api_key = f.read().strip()
+        client = OpenAI(api_key=openai_api_key)
+    elif model_provider == "gemini":
+        with open("gemini_api_key.txt", "r") as f:
+            gemini_api_key = f.read().strip()
+        client = genai.Client(api_key=gemini_api_key)
+    else:
+        raise ValueError("Unsupported model_provider: choose 'openai' or 'gemini'")
+
+    return client
 
 # Rule selection function
 def select_rules(all_rules, gender=None, number=None, case=None, tense=None):
@@ -81,12 +85,24 @@ def load_rules(rules_filename):
     ]
     return all_rules, rules_with_fst, rules_with_unimorph
 
-def load_dictionary(dict_path):
+def load_dictionary(dict_path,reverse=False):
     try:
         with open(dict_path, "r", encoding="utf-8") as f:
             dictionary = json.load(f)
-            # reverse the dictionary to map from language to English
-            dictionary = {v.lower(): k.lower() for k, v in dictionary.items()}
+            if reverse:
+                # reverse the dictionary to map from language to English
+                dictionary = {v.lower(): k.lower() for k, v in dictionary.items()}
+            return dictionary
+    except FileNotFoundError:
+        print(
+            f"Dictionary file not found at {dict_path}. Please provide a valid dictionary file."
+        )
+        return {}
+
+def load_dictionary_with_meta(dict_path):
+    try:
+        with open(dict_path, "r", encoding="utf-8") as f:
+            dictionary = json.load(f)
             return dictionary
     except FileNotFoundError:
         print(
@@ -95,6 +111,15 @@ def load_dictionary(dict_path):
         return {}
 
 def filter_dict_by_pos(dictionary_with_metadata, target_pos):
+    """
+    Filters a dictionary to include only words that are predominantly of the specified parts of speech (POS
+    categories).
+    Args:
+        dictionary_with_metadata (dict): A dictionary where keys are words and values are metadata including senses
+        target_pos (list[str]): List of POS categories to filter by (e.g. ["NOUN", "VERB"]).
+    Returns:
+        dict: Filtered dictionary containing only words that are predominantly of the specified POS categories.
+    """
     filtered_dict = {}
 
     for word, word_metadata in dictionary_with_metadata.items():
@@ -122,6 +147,133 @@ def filter_dict_by_pos(dictionary_with_metadata, target_pos):
 
     return filtered_dict
 
+def find_lrl_words_by_pos(sentence_text, pos_dicts, target_pos):
+    """
+    Finds which *target-language words* in a sentence appear in your filtered POS dictionaries.
+
+    Args:
+        sentence_text (str): Sentence in the target language (LRL).
+        pos_dicts (dict): Mapping POS → dictionary of LRL words (keys).
+        target_pos (list[str]): POS categories to match (e.g. ["NOUN", "VERB"]).
+
+    Returns:
+        dict: {pos_tag: [matched_words]} of words found in the sentence.
+    """
+    # Normalize the sentence (lowercase, basic punctuation removal)
+    sentence_clean = re.sub(r"[^\w\s'=*-]", " ", sentence_text.lower())
+    matches_by_pos = {}
+
+    for pos_tag in target_pos:
+        pos_words = set(pos_dicts.get(pos_tag, {}).keys())
+        matched = set()
+
+        # Prioritize longer multiword entries first
+        for word in sorted(pos_words, key=len, reverse=True):
+            # Use regex to match exact word boundaries (handles = and * prefixes too)
+            pattern = rf"(?<!\S){re.escape(word.lower())}(?!\S)"
+            if re.search(pattern, sentence_clean):
+                matched.add(word)
+
+        if matched:
+            matches_by_pos[pos_tag] = sorted(matched, key=len, reverse=True)
+
+    return matches_by_pos
+
+def get_random_words_from_dict(pos_dicts, pos_to_replace, no_of_random_nouns):
+    # Get a random pos word from the dictionary of selected pos
+    random_words_of_selected_pos = {}
+    for pos in pos_to_replace:
+        pos_dict = pos_dicts.get(pos, {})
+        random_words = random.sample(
+            list(pos_dict.keys()),
+            min(no_of_random_nouns, len(pos_dict))
+        )
+        for word in random_words:
+            random_words_of_selected_pos[word] = pos_dict[word]
+
+    return random_words_of_selected_pos
+
+def get_lrl_words_meta(lrl_words_by_pos, spacy_info, dictionary, sentence):
+        if lrl_words_by_pos == {}:
+            print("No words found in the sentence to replace.")
+            gender = None
+            plural = None
+            case = None
+            morph = None
+            
+
+        else:
+            print(f"Words to be replaced: {lrl_words_by_pos}")
+            translation_words_to_be_replaced = {}
+            for pos_tag, words in lrl_words_by_pos.items():
+                for word in words:
+                    word = word.strip().lower()
+                    word_translation = dictionary.get(word, "No translation available")
+                    translation_words_to_be_replaced[word] = word_translation
+
+            if translation_words_to_be_replaced == {}:
+                print(f"Warning: No translation found for words {list(lrl_words_by_pos)}")
+            else:
+                # Clean translation, split by comma and / , remove bracket
+                translation_words_to_be_replaced = {
+                    word: translation.split(",")[0]
+                    .split("/")[0]
+                    .split("(")[0]
+                    .strip()
+                    for word, translation in translation_words_to_be_replaced.items()
+                }
+            print(f"Translation: {translation_words_to_be_replaced}")
+
+            # Check if each selected word's translation is present in the target sentence
+            # TODO: Fix naive search, this can result in words infixed in others.
+            words_present = []
+            for word,word_translation in translation_words_to_be_replaced.items():
+                if word_translation in sentence["translated_sentence"]:
+                    print(f"{word_translation} ({word}) present in sentence")
+                    words_present.append(word)
+            # Randomly select one word to be replaced from present, or else from all
+            if words_present!=[]:
+                word_to_be_replaced = random.choice(words_present)
+            else:
+                word_to_be_replaced = random.choice(list(translation_words_to_be_replaced.keys()))
+            translation_words_to_be_replaced = translation_words_to_be_replaced[word_to_be_replaced]
+            print(f"Selected word to be replaced: {word_to_be_replaced} - {translation_words_to_be_replaced}")
+            # Get spacy POS mapping for the sentence
+            word_stem_info = None
+            for word_info in spacy_info:
+                if word_info["lemma"] == translation_words_to_be_replaced:
+                    word_stem_info = word_info
+                    break
+
+            if word_stem_info:
+                print(f"Found word stem info: {word_stem_info}")
+                morph = word_stem_info.get("morph", None)
+                if morph:
+                    plural = morph.get("Number", None)
+                    if plural == "Plur":
+                        print(f"The word '{word_to_be_replaced}' is plural.")
+                    else:
+                        print(f"The word '{word_to_be_replaced}' is singular.")
+                    case = morph.get("Case", None)
+                    if case:
+                        print(
+                            f"The word '{word_to_be_replaced}' is in the case: {case}."
+                        )
+                    gender = morph.get("Gender", None)
+                    if gender:
+                        print(
+                            f"The word '{word_to_be_replaced}' is of gender {gender}."
+                        )
+            else:
+                print(f"No word stem info found for: {translation_words_to_be_replaced}")
+                morph = None
+                plural = None
+                case = None
+                gender = None
+
+            # print(f"Morphology Info: {morphology_info}")
+        return gender, plural, case
+
 @app.command()
 def generate_sentences(
     filename: str = typer.Argument(None, help="Path to the input pdf file"),
@@ -135,12 +287,39 @@ def generate_sentences(
         "generated_sentences", help="Directory to save the generated sentences"
     ),
     filter_rules: bool = typer.Option(False, help="Whether to filter the rules or not"),
+    pos_to_replace: str = typer.Option(
+        "NOUN,PROPN", help="Parts of speech to replace in the sentences. E.g., NOUN, VERB, ADJ, ADV."
+    ),
+    model_provider: str = typer.Option(
+        "openai", help="Model provider to use: 'openai' or 'gemini'"
+    ),
+    granularity: str = typer.Option(
+        "rule", help="Granularity level of grammar info to use: 'rule','section' or 'book'"
+    )
 ):
     """
-    Generate sentences based on linguistic rules and a dictionary."""
+    Generate sentences based on linguistic rules and a dictionary.
+    Args:
+        filename (str): Path to the input file (used to derive rules and sentences files).
+        sentence_limit (int): Number of sentences to use as seed for generation.
+        no_of_random_nouns (int): Number of random nouns to select from the dictionary.
+        output_dir (str): Directory to save the generated sentences.
+        filter_rules (bool): Whether to filter the rules based on POS or not.
+        pos_to_replace (list): List of parts of speech to replace in the sentences.
+    Returns:
+        None
+    """
+
+    #############################
+    # LOAD DATA
+    #############################
+    client = select_model_client(model_provider=model_provider)
+    
+    pos_to_replace = [pos.strip() for pos in pos_to_replace.split(",")]
+
     base_filename = Path(filename).stem
 
-    rules_filename = Path("rules") / f"{base_filename}_rules.json"
+    rules_filename = Path("extracted_rules") / f"{base_filename}_sections_classified_gpt_extracted_rules_direct_parsed.json"
     all_rules,rules_with_fst,rules_with_unimorph = load_rules(rules_filename)
 
     # Flattened list of all rules
@@ -169,21 +348,31 @@ def generate_sentences(
     dict_path = Path("dictionary") / f"{base_filename}_dictionary.json"
     dictionary = load_dictionary(dict_path)
     dictionary_with_metadata_path = Path("dictionary") / f"{base_filename}_dictionary_with_metadata.json"
-    dictionary_with_metadata = load_dictionary(dictionary_with_metadata_path)
+    dictionary_with_metadata = load_dictionary_with_meta(dictionary_with_metadata_path)
 
     # TODO: Make this filtering for each POS
     nouns_only_dict = filter_dict_by_pos(dictionary_with_metadata, target_pos=["NOUN", "PROPN"])
     verbs_only_dict = filter_dict_by_pos(dictionary_with_metadata, target_pos=["VERB"])
     adjectives_only_dict = filter_dict_by_pos(dictionary_with_metadata, target_pos=["ADJ"])
     adverbs_only_dict = filter_dict_by_pos(dictionary_with_metadata, target_pos=["ADV"])
+    pos_dicts = {
+        "NOUN": nouns_only_dict,
+        "VERB": verbs_only_dict,
+        "ADJ": adjectives_only_dict,
+        "ADV": adverbs_only_dict,
+    }
 
+    #########################
+    # BASE PROMPT
+    #########################
     base_prompt = f"""You are an expert in linguistics and you are tasked with generating sentences in a language called {{lang}}.
     You will be given a set of rules that describe how to form sentences in {{lang}}. 
     You will also be given a sentence in {{lang}}, it's english translation, and the POS and Unimorph information for each word in the sentence.
-    You will use these rules, the sentence, the translation, the POS and Unimorph information as well as a set of nouns to generate a new sentence in {{lang}}.
-    Do not blindly replace the noun in the sentence, instead use the rules to generate a grammatically correct sentence that follows the rules provided. 
-    The rules provided are relavant to the noun in the sentence and the noun you will replace it with. 
-
+    You will use these rules, the sentence, the translation, the POS and Unimorph information as well as a new {{pos}} to generate a new sentence in {{lang}}.
+    Do not blindly replace the {{pos}} in the sentence, instead use the rules to generate a grammatically correct sentence that follows the rules provided.
+    The rules provided are relavant to the {{pos}} in the sentence and the {{pos}} you will replace it with.
+    Think step by step about how to select and apply the rules to generate the new sentence. 
+    
     You will generate a sentence that is grammatically correct and follows the rules provided. 
 
     Here are the rules:
@@ -192,21 +381,26 @@ def generate_sentences(
     {{sentence_text}}
     Here is the translation of the sentence in English:
     {{translated_sentence}}
-    Here is the POS and Unimorph information for each word in the sentence:
+    Here is the spacy metadata information for each word in the sentence:
     {{pos_unimorph_info}}
 
-    Replace the noun in the sentence with the following noun:
-    {{noun}} - {{noun_translation}}
+    Replace the {{pos}} in the sentence with the following {{pos}}:
+    {{word}} - {{word_translation}}
 
-    Provide the generated sentence in {{lang}} (transliterated to English) as well as the translation in English.
-    Only provide the generated sentence and the translation, do not provide any additional information.
+    Provide the generated sentence in {{lang}} (transliterated to English) as well as the translation in English at the end of the reasoning in a new line with quotes.
     """
 
-
-
-
-
     #####################
+
+    random_words_of_selected_pos = get_random_words_from_dict(
+        pos_dicts, pos_to_replace, no_of_random_nouns
+    )
+    for word, pos_info in random_words_of_selected_pos.items():
+        print(f"Random {pos_to_replace} word: {word} - {pos_info}")
+
+    #########################################
+    # Main generation loop
+    #########################################
 
     generated_sentences = []
 
@@ -216,7 +410,9 @@ def generate_sentences(
     for sentence in tqdm(parallel_sentences_with_pos_and_unimorph[:LIMIT]):
 
         # print(random_nouns)
-        #
+
+        print ("Selected sentence for generation:")
+        print(sentence["sentence"], "\n", sentence["translated_sentence"], "\n")
         if LIMIT <= 0:
             break
         LIMIT -= 1
@@ -231,289 +427,58 @@ def generate_sentences(
         print(f"Number: {number}")
         print(f"Genders: {genders}")
 
-        ########
-        # Get the noun in the sentence by string matching with list of nouns
-        # sentence_text = sentence["sentence"]
-        # print(sentence_text)
-        noun_replace = []
-        for noun in dictionary.keys():
-            noun = noun.strip()
-            if noun in sentence_text.lower():
-                noun_replace.append(noun)
+        # Find LRL words by POS in the sentence
+        lrl_words_by_pos = find_lrl_words_by_pos(
+            sentence_text, pos_dicts, target_pos=pos_to_replace
+        )
+        #print(f"LRL words by POS in the sentence: {lrl_words_by_pos}")
 
-        # for pronoun in pronouns:
-        # if pronoun in sentence_text.lower():
-        #     noun_replace.append(pronoun)
-        # print(f"Found pronoun '{pronoun}' in sentence '{sentence_text}'")
-        # else:
-        # print(f"Warning: Noun '{noun}' not found in sentence '{sentence_text}'")
-        # print(f"Sentence: {sentence_text}")
-        # print(f"Noun Replace: {noun_replace}")
 
-        noun_to_be_replaced = noun_replace[0] if noun_replace else None
-        if noun_to_be_replaced is None:
-            # print("No noun found in the sentence to replace.")
-            pass
+        gender, plural, case = get_lrl_words_meta(lrl_words_by_pos, spacy_info, dictionary, sentence)
+
+        ################
+        # RULE SELECTION
+        ################
+
+        print("\nRule selection\n")
+
+        if filter_rules:
+            rule_text = select_rules(
+                all_rules, gender=gender, number=number, case=case, tense=tense
+            )
         else:
-            print(f"Noun to be replaced: {noun_to_be_replaced}")
-            translation_noun_to_be_replaced = dictionary.get(
-                noun_to_be_replaced, "No translation available"
-            )
-            if translation_noun_to_be_replaced == "No translation available":
-                print(f"Warning: No translation found for noun '{noun_to_be_replaced}'")
-            else:
-                # Clean translation, split by comma and / , remove bracket
-                translation_noun_to_be_replaced = (
-                    translation_noun_to_be_replaced.split(",")[0]
-                    .split("/")[0]
-                    .split("(")[0]
-                    .strip()
-                )
-            print(f"Translation: {translation_noun_to_be_replaced}")
-            # Get spacy POS mapping for the sentence
-            noun_stem_info = None
-            for word_info in spacy_info:
-                if word_info["lemma"] == translation_noun_to_be_replaced:
-                    noun_stem_info = word_info
-                    break
+            rule_text = "\n".join("- " + rule["description"] for rule in all_rules)
 
-            if noun_stem_info:
-                print(f"Found noun stem info: {noun_stem_info}")
-                morph = noun_stem_info.get("morph", None)
-                if morph:
-                    plural = morph.get("Number", None)
-                    if plural == "Plur":
-                        print(f"The noun '{noun_to_be_replaced}' is plural.")
-                    else:
-                        print(f"The noun '{noun_to_be_replaced}' is singular.")
-                    case = morph.get("Case", None)
-                    if case:
-                        print(
-                            f"The noun '{noun_to_be_replaced}' is in the case: {case}."
-                        )
-                    gender = morph.get("Gender", None)
-                    if gender:
-                        print(
-                            f"The noun '{noun_to_be_replaced} is of gender {gender}   ."
-                        )
-            else:
-                print(f"No noun stem info found for: {translation_noun_to_be_replaced}")
-                morph = None
-                plural = None
-                case = None
-                gender = None
-
-            # print(f"Morphology Info: {morphology_info}")
-
-        # ruleset = filtered_noun_rules # TODO: Adjust this to use the full ruleset or a specific subset as needed
-        ruleset = []
-        rule_text = ""
-        if gender == "Masc":
-            ruleset += [
-                rule
-                for rule in filtered_noun_rules
-                if "masculine" in rule["description"].lower()
-            ]
-
-            # print(ruleset)
-            gender_ruleset_text_start = (
-                "The word to be replaced is masculine, so the following rules apply:\n"
-            )
-            gender_ruleset_text = gender_ruleset_text_start + "\n".join(
-                "- " + rule["description"] for rule in ruleset
-            )
-            rule_text += gender_ruleset_text
-        elif gender == "Fem":
-            ruleset += [
-                rule
-                for rule in filtered_noun_rules
-                if "feminine" in rule["description"].lower()
-            ]
-            gender_ruleset_text_start = (
-                "The word to be replaced is feminine, so the following rules apply:\n"
-            )
-            gender_ruleset_text = gender_ruleset_text_start + "\n".join(
-                "- " + rule["description"] for rule in ruleset
-            )
-            rule_text += gender_ruleset_text
-            # print(ruleset)
-        if plural == "Plur":
-            ruleset += [
-                rule
-                for rule in filtered_noun_rules
-                if "plural" in rule["description"].lower()
-            ]
-            plural_ruleset_text_start = (
-                "The word to be replaced is plural, so the following rules apply:\n"
-            )
-            plural_ruleset_text = plural_ruleset_text_start + "\n".join(
-                "- " + rule["description"] for rule in ruleset
-            )
-            rule_text += plural_ruleset_text
-            # print(ruleset)
-        if case is not None:
-            if case == "Nom":
-                ruleset += [
-                    rule
-                    for rule in filtered_noun_rules
-                    if "nominative" in rule["description"].lower()
-                ]
-                case_ruleset_text_start = "The word to be replaced is nominative, so the following rules apply:\n"
-                case_ruleset_text = case_ruleset_text_start + "\n".join(
-                    "- " + rule["description"] for rule in ruleset
-                )
-                rule_text += case_ruleset_text
-                # print(ruleset)
-            elif case == "Acc":
-                ruleset += [
-                    rule
-                    for rule in filtered_noun_rules
-                    if "accusative" in rule["description"].lower()
-                ]
-                case_ruleset_text_start = "The word to be replaced is accusative, so the following rules apply:\n"
-                case_ruleset_text = case_ruleset_text_start + "\n".join(
-                    "- " + rule["description"] for rule in ruleset
-                )
-                rule_text += case_ruleset_text
-                # print(ruleset)
-            elif case == "Dat":
-                ruleset += [
-                    rule
-                    for rule in filtered_noun_rules
-                    if "dative" in rule["description"].lower()
-                ]
-                case_ruleset_text_start = (
-                    "The word to be replaced is dative, so the following rules apply:\n"
-                )
-                case_ruleset_text = case_ruleset_text_start + "\n".join(
-                    "- " + rule["description"] for rule in ruleset
-                )
-                rule_text += case_ruleset_text
-                # print(ruleset)
-            elif case == "Gen":
-                ruleset += [
-                    rule
-                    for rule in filtered_noun_rules
-                    if "genitive" in rule["description"].lower()
-                ]
-                case_ruleset_text_start = "The word to be replaced is genitive, so the following rules apply:\n"
-                case_ruleset_text = case_ruleset_text_start + "\n".join(
-                    "- " + rule["description"] for rule in ruleset
-                )
-                rule_text += case_ruleset_text
-                # print(ruleset)
-            elif case == "Loc":
-                ruleset += [
-                    rule
-                    for rule in filtered_noun_rules
-                    if "locative" in rule["description"].lower()
-                ]
-                case_ruleset_text_start = "The word to be replaced is locative, so the following rules apply:\n"
-                case_ruleset_text = case_ruleset_text_start + "\n".join(
-                    "- " + rule["description"] for rule in ruleset
-                )
-                rule_text += case_ruleset_text
-                # print(ruleset)
-            elif case == "Abl":
-                ruleset += [
-                    rule
-                    for rule in filtered_noun_rules
-                    if "ablative" in rule["description"].lower()
-                ]
-                case_ruleset_text_start = "The word to be replaced is ablative, so the following rules apply:\n"
-                case_ruleset_text = case_ruleset_text_start + "\n".join(
-                    "- " + rule["description"] for rule in ruleset
-                )
-                rule_text += case_ruleset_text
-                # print(ruleset)
-            elif case == "Voc":
-                ruleset += [
-                    rule
-                    for rule in filtered_noun_rules
-                    if "vocative" in rule["description"].lower()
-                ]
-                case_ruleset_text_start = "The word to be replaced is vocative, so the following rules apply:\n"
-                case_ruleset_text = case_ruleset_text_start + "\n".join(
-                    "- " + rule["description"] for rule in ruleset
-                )
-                rule_text += case_ruleset_text
-                # print(ruleset)
-
-        if tense is not None:
-            if tense == "Past":
-                ruleset += [
-                    rule
-                    for rule in filtered_noun_rules
-                    if "past" in rule["description"].lower()
-                ]
-                tense_ruleset_text_start = (
-                    "The sentence in past tense, so the following rules apply:\n"
-                )
-                tense_ruleset_text = tense_ruleset_text_start + "\n".join(
-                    "- " + rule["description"] for rule in ruleset
-                )
-                rule_text += tense_ruleset_text
-                # print(ruleset)
-            elif tense == "Pres":
-                ruleset += [
-                    rule
-                    for rule in filtered_noun_rules
-                    if "present" in rule["description"].lower()
-                ]
-                tense_ruleset_text_start = (
-                    "The sentence is in present tense, so the following rules apply:\n"
-                )
-                tense_ruleset_text = tense_ruleset_text_start + "\n".join(
-                    "- " + rule["description"] for rule in ruleset
-                )
-                rule_text += tense_ruleset_text
-                # print(ruleset)
-            elif tense == "Fut":
-                ruleset += [
-                    rule
-                    for rule in filtered_noun_rules
-                    if "future" in rule["description"].lower()
-                ]
-                tense_ruleset_text_start = (
-                    "The sentence is in future tense, so the following rules apply:\n"
-                )
-                tense_ruleset_text = tense_ruleset_text_start + "\n".join(
-                    "- " + rule["description"] for rule in ruleset
-                )
-                rule_text += tense_ruleset_text
-                # print(ruleset)
-
-        ruleset_text = "\n".join("- " + rule["description"] for rule in ruleset)
-        if not ruleset_text:
-            ruleset_text = (
-                "No specific rules apply for the given noun and sentence context."
-            )
-
-        # OVerride
-
+        print(rule_text)
         print("\n")
+        ###############
+        ###############
+        ###############
         # ruleset_text = "\n".join("- " + rule["description"] for rule in ruleset)
 
         pos_info_text = ""
         # print(pos_info_text)
 
-        for noun in tqdm(random_nouns.keys()):
-            noun = noun.strip()
-            noun_translation = dictionary.get(noun, "No translation available")
-            if noun_translation == "No translation available":
-                print(f"Warning: No translation found for noun '{noun}'")
+        for word in tqdm(random_words_of_selected_pos.keys()):
+            word = word.strip()
+            word_translation = random_words_of_selected_pos[word].get("senses", [{}])[0].get("translation", "No translation available")
+            print(f"Generating sentence by replacing '{word}' ({word_translation})")
+            if word_translation == "No translation available":
+                print(f"Warning: No translation found for word '{word}'")
 
             prompt = base_prompt.format(
-                rules_data=ruleset_text,
+                rules_data=rule_text,
                 sentence_text=sentence_text,
                 translated_sentence=translated_sentence,
                 pos_unimorph_info=pos_info_text,
                 lang=base_filename.split("_")[0],  # Extract language from base_filename
-                noun=noun,
-                noun_translation=noun_translation,
+                word=word,
+                word_translation=word_translation,
+                pos=", ".join(pos_to_replace),
             )
             # print(prompt)
 
+            break #<--- REMOVE THIS TO RUN FULLY
             if MODEL_PROVIDER == "gemini":
                 response = client.models.generate_content(
                     model="gemini-2.5-flash", contents=prompt
@@ -563,7 +528,6 @@ def generate_sentences(
         json.dump(generated_sentences, f, ensure_ascii=False, indent=4)
 
     print(f"Generated sentences saved to {output_path}")
-
 
 if __name__ == "__main__":
     app()
