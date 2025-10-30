@@ -33,6 +33,7 @@ def load_nlp():
 def load_embedder():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
+    
     return SentenceTransformer("all-MiniLM-L6-v2", device=device)
 
 
@@ -135,6 +136,7 @@ def process_file(
     print(len(data))
 
     nlp = load_nlp()
+    
     model = load_embedder()
 
     ###
@@ -154,6 +156,7 @@ def process_file(
     section_to_filtered_mapping = {}
 
     for idx, section in enumerate(data):
+        print(section)
         section_id = section.get("id",None)
         sorted_tags = section["sorted_tags"]
         sorted_tag_names = [tag[0] for tag in sorted_tags]
@@ -304,7 +307,11 @@ def process_file(
         LIMIT -= 1
         # Process each section
         temp = []
+        dry_run = True
         for paragraph in section:
+            if dry_run:
+                temp.append("dry_run_response")
+                continue
             response = client.responses.create(
                 model=api_model, input=base_prompt.format(input_paragraph=paragraph)
             )
@@ -313,8 +320,13 @@ def process_file(
         gpt_extracted_rules_direct.append(temp)
         rule_section_map.append(section_id)
 
-    with open("scratch/gpt_extracted_rules_direct.json", "w", encoding="utf-8") as f:
+    with open(f"scratch/{Path(filename).stem}_gpt_extracted_rules_direct.json", "w", encoding="utf-8") as f:
         json.dump(gpt_extracted_rules_direct, f, ensure_ascii=False, indent=4)
+
+    with open(f"scratch/{Path(filename).stem}_rule_section_map.json", "w", encoding="utf-8") as f:
+        json.dump(rule_section_map, f, ensure_ascii=False, indent=4)
+
+    exit()
 
     # clean the data
     for i, section in enumerate(gpt_extracted_rules_direct):

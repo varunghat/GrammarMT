@@ -348,6 +348,10 @@ def classify_sections(
     out_dir = Path("classified_json")
     out_dir.mkdir(exist_ok=True)
 
+    # Check for nltk averaged_perceptron_tager, if not download
+    # TODO
+    
+
     classified = []
     for section in tqdm(data, desc="Classifying"):
         text = section.get("text", "")

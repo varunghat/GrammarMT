@@ -102,8 +102,8 @@ def run_pipeline(
 
     ######################################################
     # Step 2: Call section_tagger.py with the output JSON
-    sections_json = Path("parsed_grammar_json") / (
-        Path(filename).stem + "_sections.json"
+    sections_json = Path("classified_json") / (
+        Path(filename).stem + "_sections_classified.json"
     )
     typer.echo(f"Running section_tagger.py on {sections_json}")
     command = ["python", "section_tagger.py", str(sections_json)]
