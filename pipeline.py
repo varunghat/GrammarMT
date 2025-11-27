@@ -54,7 +54,7 @@ def run_pipeline(
     ######################################################
     # Step 1: Call pdf_parser.py with the PDF filename
     typer.echo(f"Running pdf_parser.py on {filename}")
-    command = ["python", "pdf_parser.py", filename]
+    command = ["python", "src/pdf_parser.py", filename]
     if config_file:
         # Get additional arguments from config or use defaults
         max_heading_number = config.get("max_heading_number", None)
@@ -106,7 +106,7 @@ def run_pipeline(
         Path(filename).stem + "_sections_classified.json"
     )
     typer.echo(f"Running section_tagger.py on {sections_json}")
-    command = ["python", "section_tagger.py", str(sections_json)]
+    command = ["python", "src/section_tagger.py", str(sections_json)]
     if config_file:
         heading_weight = config.get("heading_weight", None)
         threshold = config.get("threshold", None)
@@ -143,7 +143,7 @@ def run_pipeline(
         Path(filename).stem + "_sections_tagged.json"
     )
     typer.echo(f"Running rule_extraction.py on {tagged_json}")
-    command = ["python", "rule_extraction.py", str(tagged_json)]
+    command = ["python", "src/rule_extraction.py", str(tagged_json)]
     if config_file:
         target_words = config.get("target_words", None)
         min_gap = config.get("min_gap", None)
@@ -176,7 +176,7 @@ def run_pipeline(
         Path(filename).stem + "_sections_tagged_rules.json"
     )
     typer.echo(f"Running sentence_generation.py on {rules_json}")
-    command = ["python", "sentence_generation.py", str(rules_json)]
+    command = ["python", "src/sentence_generation.py", str(rules_json)]
     if config_file:
         sentence_limit = config.get("sentence_limit", None)
         no_of_random_nouns = config.get("no_of_random_nouns", None)
