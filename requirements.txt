@@ -8,5 +8,6 @@ sentence-transformers
 nltk
 numpy
 pandas
-google-genai
+pymupdf
 
+google-genai
