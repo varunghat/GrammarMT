@@ -345,7 +345,7 @@ def classify_sections(
     """
     path = Path(filename)
     data = json.loads(Path(filename).read_text(encoding="utf-8"))
-    out_dir = Path("classified_json")
+    out_dir = Path("data/section_tagged")
     out_dir.mkdir(exist_ok=True)
 
     # Check for nltk averaged_perceptron_tager, if not download

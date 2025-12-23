@@ -102,9 +102,7 @@ def run_pipeline(
 
     ######################################################
     # Step 2: Call section_tagger.py with the output JSON
-    sections_json = Path("classified_json") / (
-        Path(filename).stem + "_sections_classified.json"
-    )
+    sections_json = Path("data/sections") / (Path(filename).stem + "_sections.json")
     typer.echo(f"Running section_tagger.py on {sections_json}")
     command = ["python", "src/section_tagger.py", str(sections_json)]
     if config_file:
@@ -139,8 +137,8 @@ def run_pipeline(
 
     ######################################################
     # Step 3: Call rule_extraction.py with the next output JSON
-    tagged_json = Path("classified_json") / (
-        Path(filename).stem + "_sections_tagged.json"
+    tagged_json = Path("data/section_tagged") / (
+        Path(filename).stem + "_sections_classified.json"
     )
     typer.echo(f"Running rule_extraction.py on {tagged_json}")
     command = ["python", "src/rule_extraction.py", str(tagged_json)]

@@ -130,6 +130,7 @@ def process_file(
         200, help="Target number of words per split section"
     ),
     min_gap: int = typer.Option(1, help="Minimum gap between splits (in sentences)"),
+    dry_run: bool = typer.Option(False, help="If set to True, skip actual API calls"),
 ):
     with open(filename, encoding="utf-8") as f:
         data = json.load(f)
@@ -248,49 +249,56 @@ def process_file(
     ####################################################################################
     # Use gpt to extract rules from each paragraph using the prompt
 
-    base_prompt = f"""You are an expert in computational linguistics.
+    base_prompt = f"""You are an expert in computational linguistics and rule-based machine translation.
 
-    You will be given a paragraph from a descriptive grammar of the language: {{language_name}}.
-    Your task is to extract every grammatical rule explicitly stated or clearly implied by examples in that paragraph.
-    Only extract what the paragraph supports, do not invent or generalize beyond it.
-    If no rule is described, output a single block stating that.
+    You will be given a paragraph from a descriptive grammar of the language {{language_name}}.
 
-    Each rule must be expressed clearly and concisely in structured form.
-    Output YAML only (no prose, no code fences). 
-    One YAML block per rule, separated by `---`.
+    Extract only grammatical rules that have **explicit surface cues** in the paragraph.
+    A rule is valid only if it can be **detected directly from the surface form of a sentence**:
+    words, morphemes, clitics, affixes, particles, reduplication, or overt syntactic markers.
 
-    For each rule, include the following fields:
+    Do NOT extract:
+    - abstract semantic or argument-structure roles (e.g., S/O/P/R/T)
+    - typological statements (e.g., “nominative–accusative”, “SV order”) unless overtly marked
+    - theoretical explanations that lack surface patterns
+    - generalizations without explicit morphological or syntactic triggers
+    - duplicates or paraphrases of already stated rules
 
-    - description: A plain-language summary of the rule
-    - condition: When or where the rule applies (context, environment, or restriction)
-    - action: What the rule does (the grammatical or morphological change, or syntactic effect)
-    - confidence: One of [High, Medium, Low] depending on how explicitly the rule is stated
-    - category: One of [Morphology, Syntax, Phonology, Semantics, Pragmatics, Orthography, Other]
-    - linguistic_level: word | phrase | clause | discourse
-    - usage: One of [attested, prescriptive, archaic, dialectal, colloquial, formal]
-    - unimorph: Optional UniMorph feature string (e.g., "V;PST;3;SG") or empty if not relevant
-    - grammar_tags: [list of tags like "Plural", "Past Tense", "Agreement", "Negation"]
-    - notes: Optional clarifications useful for later application
+    Rules must be:
+    - atomic (one construction per rule)
+    - surface-detectable
+    - machine-actionable
+    - formal (patterns, variables, transformation logic)
+    - suitable for use in rule selection later
 
-    If no grammatical rules are found, output:
+    Output YAML only.  
+    Each rule must be a separate YAML document separated by `---`.
 
-    description: "No grammatical rules are described in the paragraph."
-    condition: ""
-    action: ""
-    examples: []
-    confidence: ""
-    category: ""
-    linguistic_level: ""
-    usage: ""
-    unimorph: ""
-    grammar_tags: []
-    notes: ""
+    Each rule must contain exactly:
 
-    Paragraph: {{input_paragraph}}
+    - description: one-sentence summary of the rule
+    - match_pattern: explicit surface pattern required to identify the rule  
+    (morphemes, affixes, clitics, reduplication, specific particles, or constrained word order)
+    - variables: list of variables used in the pattern (e.g., VERB, LOC, NOUN, OBJ)
+    - transform_template: abstract, language-independent mapping of variables  
+    (e.g., "VERB bo LOC → MOVE_TO(LOC)")
+
+    Do NOT include any pseudocode or function names in this prompt.
+
+    If the paragraph contains no surface-detectable rules, output one YAML document:
+
+    description: "No grammatical rule is described in the paragraph."
+    match_pattern: ""
+    variables: []
+    transform_template: ""
+
+    Paragraph:
+    {{input_paragraph}}
+
 
     """
 
-    with open("openai_api_key.txt", "r") as f:
+    with open("api_keys/openai_api_key.txt", "r") as f:
         openai_api_key = f.read().strip()
 
     client = OpenAI(api_key=openai_api_key)
@@ -302,7 +310,7 @@ def process_file(
     # Iterate through the sections
     print("Total sections to process:", len(sections_split))
     api_model = "gpt-4o-mini"
-    dry_run = False  # Set to True to skip actual API calls
+
     for section in tqdm(sections_split):
         section_id = section.get("section_id", None)
         paragraphs = section.get("paragraphs", None)
@@ -339,14 +347,15 @@ def process_file(
         rule_section_map.append({"section_id": section_id, "paragraph_map": map_temp})
 
     # Store the filtered sections as well for reference
+    Path("data/sections_split").mkdir(exist_ok=True)
     with open(
-        f"extracted_rules/{Path(filename).stem}_split_sections.json",
+        f"data/sections_split/{Path(filename).stem}_split.json",
         "w",
         encoding="utf-8",
     ) as f:
         json.dump(sections_split, f, ensure_ascii=False, indent=4)
     print(
-        f"Saved split sections to extracted_rules/{Path(filename).stem}_split_sections.json"
+        f"Saved split sections to data/sections_split/{Path(filename).stem}_split.json"
     )
     if dry_run:
         print("Dry run complete, no parsing performed.")
@@ -358,7 +367,7 @@ def process_file(
     ) as f:
         json.dump(gpt_extracted_rules_direct, f, ensure_ascii=False, indent=4)
     print(
-        f"Saved raw GPT responses to scratch/{Path(filename).stem}_gpt_extracted_rules_direct.json"
+        f"Saved raw LLM responses to scratch/{Path(filename).stem}_gpt_extracted_rules_direct.json"
     )
 
     with open(
@@ -413,9 +422,9 @@ def process_file(
             gpt_extracted_rules_direct[i][j] = parsed_list
 
     # Store the responses in a JSON file
-    Path("extracted_rules").mkdir(exist_ok=True)
+    Path("data/extracted_rules").mkdir(exist_ok=True)
     with open(
-        f"extracted_rules/{Path(filename).stem}_gpt_extracted_rules_direct_parsed.json",
+        f"data/extracted_rules/{Path(filename).stem}_rules.json",
         "w",
         encoding="utf-8",
     ) as f:
@@ -423,7 +432,7 @@ def process_file(
 
     print(
         "Extraction complete. Results saved to",
-        f"extracted_rules/{Path(filename).stem}_gpt_extracted_rules_direct_parsed.json",
+        f"data/extracted_rules/{Path(filename).stem}_rules.json",
     )
 
 

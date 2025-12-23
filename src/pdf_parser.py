@@ -21,42 +21,6 @@ app = typer.Typer(
 )
 
 
-def collect_consecutive_lines_across_blocks(
-    start_block_index, start_line_index, blocks, target_font=None
-) -> Tuple[int, int, str, str]:
-    """
-    Collects consecutive lines of text across blocks in a PDF document.
-    """
-    collected_text = []
-    block_index = start_block_index
-    line_index = start_line_index
-
-    if start_block_index >= len(blocks):
-        return block_index, line_index, "", target_font
-
-    while block_index < len(blocks):
-        lines = blocks[block_index].get("lines", [])
-        while line_index < len(lines):
-            spans = lines[line_index].get("spans", [])
-            if not spans or len(spans) != 1:
-                return block_index, line_index, " ".join(collected_text), target_font
-
-            span = spans[0]
-            if target_font is None:
-                target_font = span["font"]
-
-            if span["font"] != target_font:
-                return block_index, line_index, " ".join(collected_text), target_font
-
-            collected_text.append(span["text"].strip())
-            line_index += 1
-
-        block_index += 1
-        line_index = 0
-
-    return block_index, line_index, " ".join(collected_text), target_font
-
-
 def build_line_table(pdf_file_path, y_tolerance=2.0, line_tolerance=2.0):
     all_lines = []
 
@@ -473,31 +437,31 @@ def parse_pdf(
     sections_cleaned = clean_sections(sections)
     print(f"DEBUG: Cleaned sections count: {len(sections_cleaned)}")
 
-    print("DEBUG: Extracting parallel sentences...")
-    parallel_sentences = extract_parallel_sentences(all_lines)
-    print(f"DEBUG: Extracted {len(parallel_sentences)} parallel sentences.")
+    # print("DEBUG: Extracting parallel sentences...")
+    # parallel_sentences = extract_parallel_sentences(all_lines)
+    # print(f"DEBUG: Extracted {len(parallel_sentences)} parallel sentences.")
 
-    print("DEBUG: Enriching parallel sentences with POS and Unimorph info...")
-    parallel_sentences_enriched = enrich_parallel_sentences(parallel_sentences)
-    print(f"DEBUG: Enriched {len(parallel_sentences_enriched)} parallel sentences.")
+    # print("DEBUG: Enriching parallel sentences with POS and Unimorph info...")
+    # parallel_sentences_enriched = enrich_parallel_sentences(parallel_sentences)
+    # print(f"DEBUG: Enriched {len(parallel_sentences_enriched)} parallel sentences.")
 
     # Ensure output directories exist
-    os.makedirs("parsed_grammar_json", exist_ok=True)
-    os.makedirs("parallel_sents", exist_ok=True)
+    os.makedirs("data/sections", exist_ok=True)
+    # os.makedirs("data/parallel_sents", exist_ok=True)
     # store sections
 
     print("Storing section text to JSON file...")
     with open(
-        f"parsed_grammar_json/{pdf_file_name}_sections.json", "w", encoding="utf-8"
+        f"data/sections/{pdf_file_name}_sections.json", "w", encoding="utf-8"
     ) as f:
         json.dump(sections_cleaned, f, ensure_ascii=False, indent=4)
 
     print(
-        f"Section text stored successfully to parsed_grammar_json/{pdf_file_name}_sections.json"
+        f"Section text stored successfully to data/sections/{pdf_file_name}_sections.json"
     )
 
     # store parallel sentences
-    print("Storing parallel sentences to JSON file...")
+    """print("Storing parallel sentences to JSON file...")
     with open(
         f"parallel_sents/{pdf_file_name}_parallel_sentences.json", "w", encoding="utf-8"
     ) as f:
@@ -516,6 +480,7 @@ def parse_pdf(
     print(
         f"Parallel sentences with POS and Unimorph info stored successfully to parallel_sents/{pdf_file_name}_parallel_sentences_with_pos_and_unimorph.json"
     )
+    """
     print("PDF parsing completed.")
 
 
