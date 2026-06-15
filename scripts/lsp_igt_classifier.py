@@ -714,17 +714,25 @@ def main():
     parser.add_argument(
         "--no-render", action="store_true", help="Skip writing annotated PDFs"
     )
+    parser.add_argument(
+        "--directory",
+        default=None,
+        metavar="DIR",
+        help="Directory to scan for PDFs (default: grammar_books/comprehensive_grammar_library/)",
+    )
     args = parser.parse_args()
 
+    books_dir = Path(args.directory) if args.directory else GRAMMAR_BOOKS_DIR
+
     if args.books:
-        pdf_paths = [GRAMMAR_BOOKS_DIR / b for b in args.books]
+        pdf_paths = [books_dir / b for b in args.books]
         missing = [p for p in pdf_paths if not p.exists()]
         if missing:
             print("ERROR — not found:", *[str(m) for m in missing])
             sys.exit(1)
     else:
-        pdf_paths = sorted(GRAMMAR_BOOKS_DIR.glob("*.pdf"))
-        print(f"Found {len(pdf_paths)} PDFs in {GRAMMAR_BOOKS_DIR.name}/")
+        pdf_paths = sorted(books_dir.glob("*.pdf"))
+        print(f"Found {len(pdf_paths)} PDFs in {books_dir}/")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Loading model from {MODEL_DIR.name} on {device} …")

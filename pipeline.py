@@ -1,5 +1,6 @@
 import typer
 import subprocess
+import sys
 from pathlib import Path
 import yaml
 
@@ -12,201 +13,131 @@ app = typer.Typer(
 )
 
 
+def run(command: list, step: str) -> None:
+    result = subprocess.run(command)
+    if result.returncode != 0:
+        typer.echo(f"Error in {step}, stopping pipeline.")
+        raise typer.Exit(code=result.returncode)
+
+
 @app.command()
 def run_pipeline(
     filename: str = typer.Argument(None, help="Path to the PDF file"),
     config_file: str = typer.Option(
-        None, "--config", "-c", help="Path to the config file"
+        None, "--config", "-c", help="Path to the config YAML file"
     ),
     download_models: bool = typer.Option(
-        False, "--download-models", "-d", help="Download required models"
+        False, "--download-models", "-d", help="Download required models before running"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Build batch files but skip Gemini API submission"
     ),
 ):
     """
     Run the full document processing pipeline:
     1. Parse the PDF to JSON
     2. Tag sections in the JSON
-    3. Extract rules from the tagged JSON
-    4. Generate sentences from the extracted rules
+    3. Extract grammatical rules (Gemini batch)
+    4. Codify and merge rules (Gemini batch)
+    5. Generate training sentences
     """
     if download_models:
         typer.echo("Downloading required models...")
-        error_code = subprocess.run(["python", "download_models.py"], check=True)
-        if error_code.returncode != 0:
-            typer.echo("Error downloading models, stopping pipeline.")
-            raise typer.Exit(code=error_code.returncode)
+        run(["python", "scripts/utils/download_models.py"], "download_models")
         typer.echo("Models downloaded successfully.")
+
     if not filename or not Path(filename).is_file():
         typer.echo("Please provide a valid PDF filename.")
         raise typer.Exit(code=1)
 
+    config = {}
     if config_file:
         if not Path(config_file).is_file():
-            typer.echo("Please provide a valid config file.")
+            typer.echo(f"Config file not found: {config_file}")
             raise typer.Exit(code=1)
-        with open(config_file, "r") as f:
-            config = yaml.safe_load(f)
-
+        with open(config_file) as f:
+            config = yaml.safe_load(f) or {}
     else:
-        typer.echo("No config file provided, using default settings.")
-        config = {}
+        typer.echo("No config file provided, using defaults.")
+
+    stem = Path(filename).stem
+    # Language name is the first underscore-delimited token of the PDF filename
+    # e.g. "kalamang_grammar.pdf" → "kalamang"
+    language = stem.split("_")[0]
 
     ######################################################
-    # Step 1: Call pdf_parser.py with the PDF filename
-    typer.echo(f"Running pdf_parser.py on {filename}")
+    # Step 1: pdf_parser.py
+    typer.echo(f"\n[1/5] Parsing PDF: {filename}")
     command = ["python", "scripts/pdf_parser.py", filename]
-    if config_file:
-        # Get additional arguments from config or use defaults
-        max_heading_number = config.get("max_heading_number", None)
-        min_heading_occ_count = config.get("min_heading_occ_count", None)
-        min_heading_total_char_length = config.get(
-            "min_heading_total_char_length", None
-        )
-        main_body_tolerance = config.get("main_body_tolerance", None)
-        if (
-            max_heading_number is None
-            or min_heading_occ_count is None
-            or min_heading_total_char_length is None
-            or main_body_tolerance is None
-        ):
-            typer.echo("Config file is missing required parameters.")
-            if max_heading_number is None:
-                typer.echo("Missing: max_heading_number")
-            if min_heading_occ_count is None:
-                typer.echo("Missing: min_heading_occ_count")
-            if min_heading_total_char_length is None:
-                typer.echo("Missing: min_heading_total_char_length")
-            if main_body_tolerance is None:
-                typer.echo("Missing: main_body_tolerance")
-            raise typer.Exit(code=1)
-
-        # Extend the command with additional arguments
-        command.extend(
-            [
-                "--max-heading-number",
-                str(max_heading_number),
-                "--min-heading",
-                str(min_heading_occ_count),
-                "--min-heading-total-char-length",
-                str(min_heading_total_char_length),
-                "--main-body-tolerance",
-                str(main_body_tolerance),
-                "--config",
-                config_file,
-            ]
-        )
-    error_code = subprocess.run(command, check=True)
-    if error_code.returncode != 0:
-        typer.echo("Error in pdf_parser.py, stopping pipeline.")
-        raise typer.Exit(code=error_code.returncode)
+    if config:
+        for flag, key in [
+            ("--max-heading-number",          "max_heading_number"),
+            ("--min-heading",                 "min_heading_occ_count"),
+            ("--min-heading-total-char-length","min_heading_total_char_length"),
+            ("--main-body-tolerance",         "main_body_tolerance"),
+        ]:
+            if key in config:
+                command.extend([flag, str(config[key])])
+    run(command, "pdf_parser.py")
 
     ######################################################
-    # Step 2: Call section_tagger.py with the output JSON
-    sections_json = Path("data/sections") / (Path(filename).stem + "_sections.json")
-    typer.echo(f"Running section_tagger.py on {sections_json}")
+    # Step 2: section_tagger.py
+    sections_json = Path("data/sections") / f"{stem}_sections.json"
+    typer.echo(f"\n[2/5] Tagging sections: {sections_json}")
     command = ["python", "scripts/section_tagger.py", str(sections_json)]
-    if config_file:
-        heading_weight = config.get("heading_weight", None)
-        threshold = config.get("threshold", None)
-        strong_count = config.get("strong_count", None)
-        if heading_weight is None or threshold is None or strong_count is None:
-            typer.echo(
-                "Config file is missing required parameters for section_tagger.py."
-            )
-            if heading_weight is None:
-                typer.echo("Missing: heading_weight")
-            if threshold is None:
-                typer.echo("Missing: threshold")
-            if strong_count is None:
-                typer.echo("Missing: strong_count")
-            raise typer.Exit(code=1)
-        command.extend(
-            [
-                "--heading-weight",
-                str(heading_weight),
-                "--threshold",
-                str(threshold),
-                "--strong-count",
-                str(strong_count),
-            ]
-        )
-    error_code = subprocess.run(command, check=True)
-    if error_code.returncode != 0:
-        typer.echo("Error in section_tagger.py, stopping pipeline.")
-        raise typer.Exit(code=error_code.returncode)
+    if config:
+        for flag, key in [
+            ("--heading-weight", "heading_weight"),
+            ("--threshold",      "threshold"),
+            ("--strong-count",   "strong_count"),
+        ]:
+            if key in config:
+                command.extend([flag, str(config[key])])
+    run(command, "section_tagger.py")
 
     ######################################################
-    # Step 3: Call rule_extraction.py with the next output JSON
-    tagged_json = Path("data/section_tagged") / (
-        Path(filename).stem + "_sections_classified.json"
-    )
-    typer.echo(f"Running rule_extraction.py on {tagged_json}")
+    # Step 3: rule_extraction.py
+    tagged_json = Path("data/section_tagged") / f"{stem}_sections_classified.json"
+    typer.echo(f"\n[3/5] Extracting rules: {tagged_json}")
     command = ["python", "scripts/rule_extraction.py", str(tagged_json)]
-    if config_file:
-        target_words = config.get("target_words", None)
-        min_gap = config.get("min_gap", None)
-        if target_words is None or min_gap is None:
-            typer.echo(
-                "Config file is missing required parameters for rule_extraction.py."
-            )
-            if target_words is None:
-                typer.echo("Missing: target_words")
-            if min_gap is None:
-                typer.echo("Missing: min_gap")
-            raise typer.Exit(code=1)
-        command.extend(
-            [
-                "--target-words",
-                str(target_words),
-                "--min-gap",
-                str(min_gap),
-            ]
-        )
-    error_code = subprocess.run(command, check=True)
-    if error_code.returncode != 0:
-        typer.echo("Error in rule_extraction.py, stopping pipeline.")
-        raise typer.Exit(code=error_code.returncode)
+    if config:
+        for flag, key in [
+            ("--target-words", "target_words"),
+            ("--min-gap",      "min_gap"),
+        ]:
+            if key in config:
+                command.extend([flag, str(config[key])])
+    if dry_run:
+        command.append("--dry-run")
+    run(command, "rule_extraction.py")
 
     ######################################################
-    # Step 4: Call sentence_generation.py with all the output JSONs
+    # Step 4: rule_codification.py
+    extracted_rules = Path("data/extracted_rules") / f"{language}_extracted_rules.json"
+    typer.echo(f"\n[4/5] Codifying rules: {extracted_rules}")
+    command = ["python", "scripts/rule_codification.py", str(extracted_rules)]
+    if dry_run:
+        command.append("--dry-run")
+    run(command, "rule_codification.py")
 
-    rules_json = Path("extracted_rules_json") / (
-        Path(filename).stem + "_sections_tagged_rules.json"
-    )
-    typer.echo(f"Running sentence_generation.py on {rules_json}")
-    command = ["python", "scripts/sentence_generation.py", str(rules_json)]
-    if config_file:
-        sentence_limit = config.get("sentence_limit", None)
-        no_of_random_nouns = config.get("no_of_random_nouns", None)
-        output_dir = config.get("output_dir", "generated_sentences")
-        if sentence_limit is None or no_of_random_nouns is None or output_dir is None:
-            typer.echo(
-                "Config file is missing required parameters for sentence_generation.py."
-            )
-            if sentence_limit is None:
-                typer.echo("Missing: sentence_limit")
-            if no_of_random_nouns is None:
-                typer.echo("Missing: no_of_random_nouns")
+    ######################################################
+    # Step 5: sentence_generation.py
+    final_rules = Path("data/extracted_rules") / f"{language}_extracted_rules_final.json"
+    typer.echo(f"\n[5/5] Generating sentences: {final_rules}")
+    command = ["python", "scripts/sentence_generation.py", str(final_rules)]
+    if config:
+        for flag, key in [
+            ("--sentence-limit",      "sentence_limit"),
+            ("--no-of-random-nouns",  "no_of_random_nouns"),
+            ("--output-dir",          "output_dir"),
+            ("--granularity",         "granularity"),
+            ("--model-provider",      "model_provider"),
+        ]:
+            if key in config:
+                command.extend([flag, str(config[key])])
+    run(command, "sentence_generation.py")
 
-            if output_dir is None:
-                typer.echo("Missing: output_dir")
-            raise typer.Exit(code=1)
-        command.extend(
-            [
-                "--sentence-limit",
-                str(sentence_limit),
-                "--no-of-random-nouns",
-                str(no_of_random_nouns),
-                "--output-dir",
-                output_dir,
-            ]
-        )
-    error_code = subprocess.run(command, check=True)
-    if error_code.returncode != 0:
-        typer.echo("Error in sentence_generation.py, stopping pipeline.")
-        raise typer.Exit(code=error_code.returncode)
-
-    typer.echo("Pipeline completed successfully.")
+    typer.echo("\nPipeline completed successfully.")
 
 
 if __name__ == "__main__":

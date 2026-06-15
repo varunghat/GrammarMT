@@ -1,9 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import argparse
 import json
 import re
+import sys
 from copy import deepcopy
+from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import Counter
@@ -11,24 +14,14 @@ import spacy
 from tqdm import tqdm
 
 
-language = "mandan"
-
-train_or_test = "train"
-
-with open(f"../data/parallel_sentences/{language}_{train_or_test}_set.json", "r", encoding="utf-8") as f:
-    parallel_sentences = json.load(f)
-
-print(len(parallel_sentences))
-print(parallel_sentences[0])
-
-
 def enrich_parallel_sentences(parallel_sents):
     try:
         nlp = spacy.load("en_core_web_sm")
     except Exception:
-        return parallel_sents  # skip if model missing
+        print("Warning: en_core_web_sm not found, skipping enrichment. Run: python -m spacy download en_core_web_sm")
+        return parallel_sents
 
-    for sent in tqdm(parallel_sents):
+    for sent in tqdm(parallel_sents, desc="Enriching with spacy"):
         doc = nlp(sent["translation"])
         res, tense, number, genders = [], None, None, []
         plural_details, genders_details = None, []
@@ -71,7 +64,7 @@ def clean_parallel_sentences(parallel_sentences):
     parallel_sentences_cleaned = deepcopy(parallel_sentences)
     for i, sent in enumerate(parallel_sentences_cleaned):
         sent["source"] = sent["source"].strip().replace("\n", " ")
-        sent["gloss"] = sent["gloss"].strip().replace("\n", " ")
+        sent["gloss"] = sent.get("gloss", "").strip().replace("\n", " ")
         sent["translation"] = sent["translation"].strip().replace("\n", " ")
 
         # Remove (n) from source (where n is a number or a letter) only at the start
@@ -81,8 +74,7 @@ def clean_parallel_sentences(parallel_sentences):
         sent["source"] = re.sub(r'\b[a-zA-Z][\.:]\s*', ' ', sent["source"]).strip()
 
         # Get the text within the largest pair of same quotes in translation
-        # Make sure to get the largest match if nested quotes exist
-        quote_patterns = [("'", "'"), ('"', '"'), ('‘', '’'), ('“', '”')]
+        quote_patterns = [("'", "'"), ('"', '"'), ("‘", "’"), ("“", "”")]
         max_len = 0
         matched = False
         current_match = ""
@@ -95,12 +87,10 @@ def clean_parallel_sentences(parallel_sentences):
                     max_len = current_len
                     current_match = sent["translation"][first_index + 1:last_index].strip()
                     matched = True
-                    print(f"Matched quotes: {open_q}{close_q} in sentence {i} -> {current_match}")
         if matched:
             sent["translation"] = current_match
         if not matched:
             sent["translation"] = sent["translation"].strip()
-            # Remove leading and trailing quotes if no matched pairs found
             sent["translation"] = re.sub(r'^[“”‘’"\']+', '', sent["translation"])
             sent["translation"] = re.sub(r'[“”‘’"\']+$', '', sent["translation"]).strip()
 
@@ -109,252 +99,228 @@ def clean_parallel_sentences(parallel_sentences):
         sent["gloss"] = re.sub(r'\s+', ' ', sent["gloss"])
         sent["translation"] = re.sub(r'\s+', ' ', sent["translation"])
 
-        # Remove citation patterns in translation like [1], (see Smith 2020), etc. ONLY AT THE END
+        # Remove citation patterns in translation ONLY AT THE END
         sent["translation"] = re.sub(r'\s*\[[^\]]*\]\s*$', ' ', sent["translation"]).strip()
         sent["translation"] = re.sub(r'\s*\(see [^\)]*\)\s*$', ' ', sent["translation"]).strip()
         sent["translation"] = re.sub(r'\s*\([^\)]*et al\)\s*$', ' ', sent["translation"]).strip()
         sent["translation"] = re.sub(r'\s*\([^\)]*202[0-9][^\)]*\)\s*$', ' ', sent["translation"]).strip()
-        # Remove extra spaces again after citation removal
         sent["translation"] = re.sub(r'\s+', ' ', sent["translation"]).strip()
 
     return parallel_sentences_cleaned
 
 
-cleaned_parallel_sentences = clean_parallel_sentences(parallel_sentences)
+def plot_corpus_stats(data_dir: Path, images_dir: Path):
+    languages = ["kalamang", "tuatschin", "mandan"]
+    clean_names = ["Kalamang", "Tuatschin", "Mandan"]
+    colors = ['dimgray', 'gray', 'lightgray']
 
+    sentence_lengths_dist = []
+    word_lengths_dist = []
+    present_names = []
 
-for row, row_2 in zip(cleaned_parallel_sentences, parallel_sentences):
-    len1 = len(row["translation"])
-    len2 = len(row_2["translation"])
-    print(len2 - len1)
-    print(row["translation"], "\n", row_2["translation"], "\n")
+    for language_name, display_name in zip(languages, clean_names):
+        candidate = data_dir / f"{language_name}_parallel_sentences_cleaned_enriched.json"
+        if not candidate.exists() and language_name == "tuatschin":
+            candidate = data_dir / "sursilvan_romansh_parallel_sentences_cleaned_enriched.json"
+        if not candidate.exists():
+            print(f"Skipping {language_name}, file not found.")
+            continue
 
+        with open(candidate, encoding="utf-8") as f:
+            sents = json.load(f)
+        print(f"Loaded {len(sents)} sentences for {language_name}.")
 
-# Store cleaned data
-output_file = f"../data/parallel_sentences/{language}_{train_or_test}_set_cleaned.json"
-with open(output_file, "w", encoding="utf-8") as f:
-    json.dump(cleaned_parallel_sentences, f, ensure_ascii=False, indent=4)
+        words_source = [len(s["source"].split()) for s in sents]
+        word_lengths_source = [len(w) for s in sents for w in s["source"].split()]
+        sentence_lengths_dist.append(words_source)
+        word_lengths_dist.append(word_lengths_source)
+        present_names.append(display_name)
 
-print(f"Saved cleaned data to {output_file}")
+    if not sentence_lengths_dist:
+        print("No enriched files found, skipping corpus statistics plot.")
+        return
 
+    plt.rcParams.update({
+        'font.family': 'serif', 'font.serif': ['Times New Roman', 'DejaVu Serif'],
+        'font.size': 10, 'axes.labelsize': 10, 'axes.titlesize': 10,
+        'xtick.labelsize': 9, 'ytick.labelsize': 9,
+        'axes.linewidth': 0.8, 'grid.linewidth': 0.5,
+    })
 
-# Enrich with spacy morphological info (adds spacy_info to each sentence)
-enriched_parallel_sentences = enrich_parallel_sentences(cleaned_parallel_sentences)
-
-enriched_output_file = f"../data/parallel_sentences/{language}_{train_or_test}_set_cleaned_enriched.json"
-with open(enriched_output_file, "w", encoding="utf-8") as f:
-    json.dump(enriched_parallel_sentences, f, ensure_ascii=False, indent=4)
-
-print(f"Saved enriched data to {enriched_output_file}")
-
-
-# --- Corpus Statistics ---
-
-plt.rcParams['font.family'] = 'serif'
-plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
-plt.rcParams['font.size'] = 10
-plt.rcParams['axes.labelsize'] = 10
-plt.rcParams['axes.titlesize'] = 10
-plt.rcParams['xtick.labelsize'] = 9
-plt.rcParams['ytick.labelsize'] = 9
-plt.rcParams['axes.linewidth'] = 0.8
-plt.rcParams['grid.linewidth'] = 0.5
-
-colors = ['dimgray', 'gray', 'lightgray']
-
-languages = ["kalamang", "tuatschin", "mandan"]
-clean_names = ["Kalamang", "Tuatschin", "Mandan"]
-
-sentence_lengths_dist = []
-word_lengths_dist = []
-
-for language_name in languages:
-    filename = f"../data/parallel_sentences/{language_name}_parallel_sentences_cleaned_enriched.json"
-    if language_name == "tuatschin":
-        try:
-            open(filename)
-        except FileNotFoundError:
-            filename = "../data/parallel_sentences/sursilvan_romansh_parallel_sentences_cleaned_enriched.json"
-
-    try:
-        with open(filename, "r", encoding="utf-8") as f:
-            enriched_parallel_sentences = json.load(f)
-    except FileNotFoundError:
-        print(f"Skipping {language_name}, file not found.")
-        continue
-
-    print(f"Loaded {len(enriched_parallel_sentences)} sentences for {language_name}.")
-
-    words_source = [len(sent["source"].split()) for sent in enriched_parallel_sentences]
-    word_lengths_source = [len(word) for sent in enriched_parallel_sentences
-                          for word in sent["source"].split()]
-
-    sentence_lengths_dist.append(words_source)
-    word_lengths_dist.append(word_lengths_source)
-
-    print(f"{language_name} - Mean Sent Len: {np.mean(words_source):.2f}, "
-          f"Mean Word Len: {np.mean(word_lengths_source):.2f}")
-
-if sentence_lengths_dist:
     fig, axes = plt.subplots(1, 2, figsize=(7, 2.5), dpi=300)
-
-    box1 = axes[0].boxplot(sentence_lengths_dist,
-                           patch_artist=True,
-                           labels=clean_names,
-                           widths=0.5,
-                           showfliers=True,
-                           flierprops=dict(marker='o', markersize=2, alpha=0.3),
-                           medianprops=dict(color="black", linewidth=1.2),
-                           boxprops=dict(linewidth=0.8),
-                           whiskerprops=dict(linewidth=0.8),
-                           capprops=dict(linewidth=0.8))
-
-    for patch, color in zip(box1['boxes'], colors):
-        patch.set_facecolor(color)
-        patch.set_edgecolor('black')
-
-    axes[0].set_ylabel('Words per Sentence', fontsize=9)
-    axes[0].set_xlabel('Language', fontsize=9)
-    axes[0].yaxis.grid(True, linestyle=':', alpha=0.4)
-    axes[0].spines['top'].set_visible(False)
-    axes[0].spines['right'].set_visible(False)
-
-    box2 = axes[1].boxplot(word_lengths_dist,
-                           patch_artist=True,
-                           labels=clean_names,
-                           widths=0.5,
-                           showfliers=True,
-                           flierprops=dict(marker='o', markersize=2, alpha=0.3),
-                           medianprops=dict(color="black", linewidth=1.2),
-                           boxprops=dict(linewidth=0.8),
-                           whiskerprops=dict(linewidth=0.8),
-                           capprops=dict(linewidth=0.8))
-
-    for patch, color in zip(box2['boxes'], colors):
-        patch.set_facecolor(color)
-        patch.set_edgecolor('black')
-
-    axes[1].set_ylabel('Characters per Word', fontsize=9)
-    axes[1].set_xlabel('Language', fontsize=9)
-    axes[1].yaxis.grid(True, linestyle=':', alpha=0.4)
-    axes[1].spines['top'].set_visible(False)
-    axes[1].spines['right'].set_visible(False)
+    for ax, data, ylabel in zip(
+        axes,
+        [sentence_lengths_dist, word_lengths_dist],
+        ['Words per Sentence', 'Characters per Word'],
+    ):
+        bp = ax.boxplot(
+            data, patch_artist=True, labels=present_names, widths=0.5,
+            showfliers=True, flierprops=dict(marker='o', markersize=2, alpha=0.3),
+            medianprops=dict(color="black", linewidth=1.2),
+            boxprops=dict(linewidth=0.8), whiskerprops=dict(linewidth=0.8),
+            capprops=dict(linewidth=0.8),
+        )
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+            patch.set_edgecolor('black')
+        ax.set_ylabel(ylabel, fontsize=9)
+        ax.set_xlabel('Language', fontsize=9)
+        ax.yaxis.grid(True, linestyle=':', alpha=0.4)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
 
     plt.tight_layout()
-    plt.savefig("images/corpus_statistics.pdf", dpi=300, bbox_inches='tight')
-    plt.savefig("images/corpus_statistics.png", dpi=300, bbox_inches='tight')
-    plt.show()
-    print("Saved: images/corpus_statistics.pdf")
+    images_dir.mkdir(parents=True, exist_ok=True)
+    plt.savefig(images_dir / "corpus_statistics.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(images_dir / "corpus_statistics.png", dpi=300, bbox_inches='tight')
+    print(f"Saved: {images_dir}/corpus_statistics.pdf")
 
 
-# --- Dictionary POS Statistics ---
+def plot_dictionary_stats(dict_dir: Path, images_dir: Path):
+    language_map = {
+        "kalamang": "Kalamang",
+        "sursilvan_romansh": "Tuatschin",
+        "mandan": "Mandan",
+    }
+    languages = list(language_map.keys())
+    colors = ['dimgray', 'gray', 'lightgray']
 
-plt.rcParams['font.family'] = 'serif'
-plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
-plt.rcParams['font.size'] = 10
-plt.rcParams['axes.labelsize'] = 10
-plt.rcParams['axes.titlesize'] = 11
-plt.rcParams['xtick.labelsize'] = 9
-plt.rcParams['ytick.labelsize'] = 9
-plt.rcParams['legend.fontsize'] = 9
-plt.rcParams['axes.linewidth'] = 0.8
-plt.rcParams['grid.linewidth'] = 0.5
+    all_pos_counts = {}
+    entry_counts = {}
 
-language_map = {
-    "kalamang": "Kalamang",
-    "sursilvan_romansh": "Tuatschin",
-    "mandan": "Mandan"
-}
-languages = ["kalamang", "sursilvan_romansh", "mandan"]
-colors = ['dimgray', 'gray', 'lightgray']
-
-all_pos_counts = {}
-entry_counts = {}
-
-for language_name in languages:
-    filename = f"../data/dictionary/{language_name}_dictionary_with_metadata.json"
-
-    try:
-        with open(filename, "r", encoding="utf-8") as f:
+    for language_name, display_name in language_map.items():
+        path = dict_dir / f"{language_name}_dictionary_with_metadata.json"
+        if not path.exists():
+            print(f"Skipping {language_name} dictionary, file not found.")
+            continue
+        with open(path, encoding="utf-8") as f:
             dictionary = json.load(f)
-    except FileNotFoundError:
-        print(f"Skipping {language_name}, file not found.")
-        continue
 
-    display_name = language_map[language_name]
-    print(f"--- {display_name.upper()} ---")
-    print(f"Entries: {len(dictionary)}")
-    entry_counts[language_name] = len(dictionary)
+        lang_pos_counts = Counter()
+        for headword, item in dictionary.items():
+            for sense in item.get("senses", []):
+                spacy_data = sense.get("spacy_analysis", {})
+                pos = spacy_data.get("head_pos", "UNKNOWN") if isinstance(spacy_data, dict) else "UNKNOWN"
+                lang_pos_counts[pos] += 1
 
-    lang_pos_counts = Counter()
-    senses_per_entry = []
+        all_pos_counts[language_name] = lang_pos_counts
+        entry_counts[language_name] = len(dictionary)
+        print(f"{display_name}: {len(dictionary)} entries, top POS: {lang_pos_counts.most_common(6)}")
 
-    for headword, item in dictionary.items():
-        senses = item.get("senses", [])
-        num_senses = len(senses)
-        senses_per_entry.append(num_senses)
+    if not all_pos_counts:
+        print("No dictionary files found, skipping dictionary POS plot.")
+        return
 
-        for sense in senses:
-            spacy_data = sense.get("spacy_analysis", {})
-            if spacy_data and isinstance(spacy_data, dict):
-                pos = spacy_data.get("head_pos", "UNKNOWN")
-            else:
-                pos = "UNKNOWN"
+    global_counter = Counter()
+    for counts in all_pos_counts.values():
+        global_counter.update(counts)
+    top_pos_tags = [tag for tag, _ in global_counter.most_common(7) if tag != "UNKNOWN"][:6]
 
-            lang_pos_counts[pos] += 1
+    plt.rcParams.update({'legend.fontsize': 9})
+    fig, ax = plt.subplots(figsize=(7, 3), dpi=300)
+    x = np.arange(len(top_pos_tags))
+    width = 0.25
 
-    all_pos_counts[language_name] = lang_pos_counts
+    for i, lang in enumerate(languages):
+        if lang not in all_pos_counts:
+            continue
+        counts = [all_pos_counts[lang].get(tag, 0) for tag in top_pos_tags]
+        total = sum(all_pos_counts[lang].values())
+        percentages = [(c / total * 100) if total > 0 else 0 for c in counts]
+        ax.bar(
+            x + (i - 1) * width, percentages, width,
+            label=f"{language_map[lang]} (n={entry_counts[lang]:,})",
+            color=colors[i], edgecolor='black', linewidth=0.6, alpha=0.85,
+        )
 
-    total_senses = sum(senses_per_entry)
-    avg_senses = total_senses / len(dictionary) if dictionary else 0
-    print(f"Total Senses: {total_senses}")
-    print(f"Avg Senses/Entry: {avg_senses:.2f}")
-    print("Top 6 POS:", lang_pos_counts.most_common(6))
-    print("")
+    ax.set_ylabel('Percentage of Entries (%)', fontsize=10)
+    ax.set_xlabel('Part of Speech', fontsize=10)
+    ax.set_xticks(x)
+    ax.set_xticklabels(top_pos_tags, fontsize=9)
+    ax.legend(loc='upper right', frameon=True, edgecolor='black', fancybox=False, fontsize=8)
+    ax.grid(axis='y', linestyle=':', alpha=0.4, linewidth=0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
 
-global_counter = Counter()
-for counts in all_pos_counts.values():
-    global_counter.update(counts)
-top_pos_tags = [tag for tag, _ in global_counter.most_common(7) if tag != "UNKNOWN"][:6]
+    plt.tight_layout()
+    images_dir.mkdir(parents=True, exist_ok=True)
+    plt.savefig(images_dir / "dictionary_pos_distribution.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(images_dir / "dictionary_pos_distribution.png", dpi=300, bbox_inches='tight')
+    print(f"Saved: {images_dir}/dictionary_pos_distribution.pdf")
 
-fig, ax = plt.subplots(figsize=(7, 3), dpi=300)
 
-x = np.arange(len(top_pos_tags))
-width = 0.25
+def main():
+    parser = argparse.ArgumentParser(
+        description="Clean and enrich parallel sentences extracted by the IGT classifier"
+    )
+    parser.add_argument(
+        "input",
+        nargs="?",
+        help="Path to the input JSON (e.g. data/igt_classifier_results/kalamang_parallel_sentences.json)",
+    )
+    parser.add_argument(
+        "--language", "-l",
+        help="Language name used for output filenames (inferred from input filename if omitted)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="data/parallel_sentences",
+        help="Directory to write cleaned/enriched JSON (default: data/parallel_sentences/)",
+    )
+    parser.add_argument(
+        "--no-enrich", action="store_true",
+        help="Skip spacy enrichment (only clean)",
+    )
+    parser.add_argument(
+        "--stats", action="store_true",
+        help="Generate corpus statistics and dictionary POS plots (no input file needed)",
+    )
+    args = parser.parse_args()
 
-for i, lang in enumerate(languages):
-    if lang not in all_pos_counts:
-        continue
+    if args.stats:
+        base = Path(__file__).parent.parent
+        plot_corpus_stats(base / "data" / "parallel_sentences", base / "images")
+        plot_dictionary_stats(base / "data" / "dictionary", base / "images")
+        return
 
-    counts = [all_pos_counts[lang].get(tag, 0) for tag in top_pos_tags]
-    total = sum(all_pos_counts[lang].values())
-    percentages = [(c / total * 100) if total > 0 else 0 for c in counts]
+    if not args.input:
+        parser.error("input is required unless --stats is used")
 
-    offset = (i - 1) * width
-    display_name = language_map[lang]
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"ERROR: file not found: {input_path}", file=sys.stderr)
+        sys.exit(1)
 
-    label = f"{display_name} (n={entry_counts[lang]:,})"
+    language = args.language or input_path.stem.split("_parallel_sentences")[0].split("_")[0]
+    print(f"Language: {language}")
 
-    rects = ax.bar(x + offset, percentages, width,
-                   label=label,
-                   color=colors[i],
-                   edgecolor='black',
-                   linewidth=0.6,
-                   alpha=0.85)
+    with open(input_path, encoding="utf-8") as f:
+        raw = json.load(f)
 
-ax.set_ylabel('Percentage of Entries (%)', fontsize=10)
-ax.set_xlabel('Part of Speech', fontsize=10)
-ax.set_xticks(x)
-ax.set_xticklabels(top_pos_tags, fontsize=9)
-ax.legend(loc='upper right', frameon=True, edgecolor='black', fancybox=False, fontsize=8)
-ax.grid(axis='y', linestyle=':', alpha=0.4, linewidth=0.5)
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
-ax.set_ylim(0, max([max([(all_pos_counts[lang].get(tag, 0) / sum(all_pos_counts[lang].values()) * 100)
-                         for tag in top_pos_tags]) for lang in languages if lang in all_pos_counts]) * 1.1)
+    # Classifier output is {"book": ..., "sentences": [...], ...}; plain files are bare lists
+    if isinstance(raw, dict):
+        parallel_sentences = raw.get("sentences", [])
+    else:
+        parallel_sentences = raw
+    print(f"Loaded {len(parallel_sentences)} sentences.")
 
-plt.tight_layout()
-plt.savefig("images/dictionary_pos_distribution.pdf", dpi=300, bbox_inches='tight')
-plt.savefig("images/dictionary_pos_distribution.png", dpi=300, bbox_inches='tight')
-plt.show()
-print("Graph saved as images/dictionary_pos_distribution.pdf")
+    cleaned = clean_parallel_sentences(parallel_sentences)
+
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cleaned_path = out_dir / f"{language}_parallel_sentences_cleaned.json"
+    with open(cleaned_path, "w", encoding="utf-8") as f:
+        json.dump(cleaned, f, ensure_ascii=False, indent=4)
+    print(f"Saved cleaned data to {cleaned_path}")
+
+    if not args.no_enrich:
+        enriched = enrich_parallel_sentences(cleaned)
+        enriched_path = out_dir / f"{language}_parallel_sentences_cleaned_enriched.json"
+        with open(enriched_path, "w", encoding="utf-8") as f:
+            json.dump(enriched, f, ensure_ascii=False, indent=4)
+        print(f"Saved enriched data to {enriched_path}")
+
+
+if __name__ == "__main__":
+    main()
