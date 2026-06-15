@@ -1,4 +1,4 @@
-# Grammar-Guided Machine Translation for Low-Resource Languages
+# GrammarMT: A Factorial Study of Synthetic Data Generation for Low-Resource Machine Translation using Grammar Books
 
 This repository contains the code accompanying the paper. It implements a pipeline that extracts grammatical rules from descriptive grammar books and uses them to guide translation of low-resource languages into English.
 
